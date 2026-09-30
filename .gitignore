@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+out/
+*.SENSITIVE.json
+pii_exposure_register.*
+models/*.onnx
+models/*.part
+samples/synthetic/
+
+# Client sample artifacts contain personal data: never committed
+Cadence_*.pdf
+Cadence_*.docx
+Cadence_*.pptx
