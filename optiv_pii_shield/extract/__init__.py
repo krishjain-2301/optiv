@@ -9,20 +9,21 @@ from ..render import render_markdown
 from .sniff import sniff
 
 
-def extract(path: str | Path, settings: Settings | None = None) -> Document:
+def extract(path: str | Path, settings: Settings | None = None, on_page=None) -> Document:
+    """``on_page(done, total)`` reports progress through a PDF's pages (other formats read at once)."""
     settings = settings or Settings()
-    doc = _extract(Path(path), settings)
+    doc = _extract(Path(path), settings, on_page)
     doc.markdown = render_markdown(doc)
     return doc
 
 
-def _extract(path: Path, settings: Settings) -> Document:
+def _extract(path: Path, settings: Settings, on_page=None) -> Document:
     path = Path(path)
     ftype = sniff(path)
     if ftype == "pdf":
         from .pdf import extract_pdf
 
-        return extract_pdf(path, settings)
+        return extract_pdf(path, settings, on_page)
     if ftype == "docx":
         from .docx import extract_docx
 

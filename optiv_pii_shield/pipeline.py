@@ -10,7 +10,7 @@ from typing import Callable, Optional
 
 from .config import Settings
 from .detect import Detector
-from .errors import ModelMissing
+from .errors import ModelMissing, RunCancelled
 from .extract import extract
 from .extract.ocr import get_engine
 from .models import Document, Finding
@@ -79,8 +79,20 @@ def get_detector(settings: Settings) -> Detector:
     return det
 
 
+# Where each stage starts on the 0-1 progress scale (the share is a rough guess at its duration).
+STAGES = (("Load models", 0.0), ("Extract", 0.03), ("Detect", 0.60), ("Tokenise", 0.80), ("Redact and report", 0.85))
+_START = dict(STAGES)
+
+
+def stage_of(frac: float) -> int:
+    """Index into STAGES of the stage running at ``frac``; len(STAGES) once the run is done."""
+    return len(STAGES) if frac >= 1.0 else max(i for i, (_, start) in enumerate(STAGES) if frac >= start)
+
+
 def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: Optional[str | Path] = None,
         progress: Optional[Callable[[str, float], None]] = None) -> RunResult:
+    """``progress(message, fraction)`` is called at every stage, PDF page, 20 text elements and
+    output file, so a caller can show where a long run is, and stop it by raising RunCancelled."""
     settings = settings or Settings()
     progress = progress or (lambda msg, frac: log.info(msg))
     run_id = time.strftime("%Y%m%d-%H%M%S") + "-" + uuid.uuid4().hex[:6]
@@ -90,16 +102,19 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
 
     t0 = time.perf_counter()
     # Models first: a missing NER model must stop the run before minutes of OCR, not after.
+    progress("Loading models", _START["Load models"])
     detector = get_detector(settings)
     get_engine(settings.ocr_engine)  # the OCR model too (cached; raises ModelMissing)
+    lo, width = _START["Extract"], _START["Detect"] - _START["Extract"]
     for i, p in enumerate(paths):
         p = Path(p)
-        progress(f"Extracting {p.name}", i / max(len(paths), 1) * 0.6)
+        progress(f"Extracting {p.name}", lo + i / max(len(paths), 1) * width)
         t = time.perf_counter()
         try:
-            doc = extract(p, settings)
-        except ModelMissing:
-            raise  # a missing model is a setup error for the whole run, not one bad file
+            doc = extract(p, settings, lambda done, total, i=i, p=p: progress(
+                f"Extracting {p.name}: page {done} of {total}", lo + (i + done / total) / len(paths) * width))
+        except (ModelMissing, RunCancelled):
+            raise  # a missing model or a cancel ends the whole run; neither is one bad file
         except Exception as exc:  # fail closed: a file we cannot read is reported, never passed on
             log.exception("extraction failed for %s", p)
             errors[p.name] = f"{type(exc).__name__}: {exc}"
@@ -107,12 +122,14 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
         timings[f"extract:{p.name}"] = round(time.perf_counter() - t, 2)
         docs[doc.file] = doc
 
-    progress("Detecting PII", 0.65)
+    lo, width = _START["Detect"], _START["Tokenise"] - _START["Detect"]
+    progress("Detecting PII", lo)
     t = time.perf_counter()
-    findings = detector.detect_all(docs)
+    findings = detector.detect_all(docs, lambda f, done, total: progress(
+        f"Detecting PII in {f}: {done:,} of {total:,} text elements", lo + done / max(total, 1) * width * 0.9))
     timings["detect"] = round(time.perf_counter() - t, 2)
 
-    progress("Assigning tokens", 0.8)
+    progress("Assigning tokens", _START["Tokenise"])
     vault = TokenVault(detector.person_index)
     vault.assign_all(docs, findings)
     needles = build_needles(vault, findings)
@@ -130,8 +147,9 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
     if out_dir is not None:
         out = Path(out_dir)
         out.mkdir(parents=True, exist_ok=True)
-        progress("Writing masked files and reports", 0.85)
-        for f, doc in docs.items():
+        lo = _START["Redact and report"]
+        for j, (f, doc) in enumerate(docs.items()):
+            progress(f"Writing the masked copy of {f}", lo + j / len(docs) * 0.12)
             name = output_stem(f)
             (out / f"{name}.extracted.SENSITIVE.md").write_text(doc.markdown, encoding="utf-8")
             outputs[f"redacted:{f}"] = out / f"{name}.redacted.md"
@@ -153,6 +171,7 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
             outputs["vault"] = vault.save(out / "token_vault.SENSITIVE.enc.json", settings.vault_passphrase)
         else:
             log.warning("no vault passphrase: token vault not saved (tokens cannot be reversed later)")
+        progress("Writing reports", lo + 0.12)
         outputs.update(write_reports(out, docs, findings, run_id, detector.components))
         _gate_shareable_reports(outputs, needles, errors)
     timings["total"] = round(time.perf_counter() - t0, 2)
