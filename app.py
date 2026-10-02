@@ -26,11 +26,22 @@ from pii_shield.report import file_summary, findings_frame  # noqa: E402
 
 st.set_page_config(page_title="PII Shield", layout="wide")
 
+SHAREABLE_REPORTS = ("pii_exposure_register.csv", "pii_exposure_register.xlsx", "summary.json", "audit_log.jsonl")
+
+
+def shareable_outputs(res, out: Path) -> list[Path]:
+    """Explicit allow-list: only outputs that passed the leak gate or never hold raw values.
+    Anything else in the folder (extracted text, vault, full register, files added later) stays out."""
+    keep = [p for k, p in res.outputs.items() if k.startswith(("masked:", "redacted:"))]
+    keep += [out / n for n in SHAREABLE_REPORTS]
+    return sorted(p for p in keep if p.exists() and "SENSITIVE" not in p.name)
+
 COLORS = {
     "PERSON": "#f4a261", "EMAIL_ADDRESS": "#2a9d8f", "PHONE_NUMBER": "#e9c46a", "EMPLOYEE_ID": "#8ab17d",
     "VENDOR_ID": "#8ab17d", "US_SSN": "#e76f51", "PASSPORT": "#e76f51", "IN_PAN": "#e76f51", "PL_PESEL": "#e76f51",
     "TAX_ID": "#e76f51", "NATIONAL_ID": "#e76f51", "CREDIT_CARD": "#d62828", "IBAN_CODE": "#d62828",
-    "DATE_OF_BIRTH": "#9d4edd", "ADDRESS": "#577590", "LOW_CONFIDENCE_OCR": "#6c757d",
+    "DATE_OF_BIRTH": "#9d4edd", "ADDRESS": "#577590", "LOW_CONFIDENCE_OCR": "#6c757d", "IN_AADHAAR": "#e76f51",
+    "IP_ADDRESS": "#457b9d", "CREDENTIAL": "#000000",
 }
 
 
@@ -288,13 +299,17 @@ with tabs[5]:
     st.subheader("7 · Outputs")
     out: Path = st.session_state["out_dir"]
     st.caption(f"Run {res.run_id} · written to {out}")
-    for p in sorted(out.iterdir()):
-        label = p.name + ("  ⚠ contains original values — store securely" if "SENSITIVE" in p.name or "register" in p.name else "")
-        st.download_button(label, p.read_bytes(), p.name, key=f"dl_{p.name}")
+    safe = shareable_outputs(res, out)
+    sensitive = [p for p in sorted(out.iterdir()) if p.is_file() and p not in safe]
+    st.markdown("**Safe to share** (masked files, LLM text, masked register, summary, audit log)")
+    for p in safe:
+        st.download_button(p.name, p.read_bytes(), p.name, key=f"dl_{p.name}")
     zbuf = io.BytesIO()
     with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in out.iterdir():
-            if "SENSITIVE" not in p.name:
-                z.write(p, p.name)
-    st.download_button("Download all (without the token vault)", zbuf.getvalue(), f"pii_shield_{res.run_id}.zip",
+        for p in safe:
+            z.write(p, p.name)
+    st.download_button("Download all shareable outputs (.zip)", zbuf.getvalue(), f"pii_shield_{res.run_id}.zip",
                        type="primary")
+    with st.expander(f"⚠ Contains original values ({len(sensitive)} file(s)): store securely, never send to an LLM"):
+        for p in sensitive:
+            st.download_button(p.name, p.read_bytes(), p.name, key=f"dl_{p.name}")

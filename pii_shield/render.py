@@ -6,7 +6,10 @@ from typing import Optional
 
 from .models import Document, Span
 
-QUOTED = {"header", "footer", "comment", "footnote", "endnote", "notes", "text_box"}
+QUOTED = {"header", "footer", "comment", "footnote", "endnote", "notes", "text_box", "alt_text", "chart", "diagram", "link"}
+# Layout / master placeholders and Word building blocks are redacted in the masked file but are
+# boilerplate ("Click to edit Master title style"), so they are left out of the text for the LLM.
+NOT_RENDERED = {"template", "field"}
 
 
 def _esc(t: str) -> str:
@@ -29,6 +32,8 @@ def render_markdown(doc: Document, texts: Optional[dict[str, str]] = None) -> st
             box = s.bbox or img_boxes.get(s.image_ref)
             y = box[1] if box else 0.0
         key = (s.page or 0, y, idx)
+        if s.kind in NOT_RENDERED:
+            continue
         if s.kind == "metadata":
             meta.append(s)
         elif s.kind == "table_cell" and s.table is not None:

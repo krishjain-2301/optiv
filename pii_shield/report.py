@@ -95,7 +95,11 @@ def write_reports(out_dir: Path, docs: dict[str, Document], findings: dict[str, 
                   components: list[str]) -> dict[str, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {}
-    df = findings_frame(findings)
+    # The shareable register shows values partially masked; the full register is SENSITIVE (it is
+    # a list of every personal value found) and is kept apart from anything that can be shared.
+    paths["register_sensitive_csv"] = out_dir / "pii_exposure_register.SENSITIVE.csv"
+    findings_frame(findings).to_csv(paths["register_sensitive_csv"], index=False)
+    df = findings_frame(findings, reveal=False)
     paths["register_csv"] = out_dir / "pii_exposure_register.csv"
     df.to_csv(paths["register_csv"], index=False)
     paths["register_xlsx"] = out_dir / "pii_exposure_register.xlsx"

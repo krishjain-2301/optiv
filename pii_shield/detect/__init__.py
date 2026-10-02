@@ -18,6 +18,7 @@ from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 from ..config import Settings
 from ..models import Document, Finding, Span
 from .ner import build_nlp_engine, try_gliner
+from .names import upper_runs
 from .propagation import build_index, propagate
 from .resolver import finalise
 from .rules import IMAGE_RULES, RuleRecognizer, run_rules
@@ -26,7 +27,8 @@ from .structure import structure_findings
 log = logging.getLogger(__name__)
 OUTPUT_ENTITIES = [
     "PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "EMPLOYEE_ID", "VENDOR_ID", "US_SSN", "PASSPORT", "IN_PAN",
-    "PL_PESEL", "TAX_ID", "NATIONAL_ID", "CREDIT_CARD", "IBAN_CODE", "DATE_OF_BIRTH", "ADDRESS",
+    "PL_PESEL", "TAX_ID", "NATIONAL_ID", "CREDIT_CARD", "IBAN_CODE", "DATE_OF_BIRTH", "ADDRESS", "IN_AADHAAR",
+    "IP_ADDRESS", "CREDENTIAL",
 ]
 
 
@@ -62,11 +64,14 @@ class Detector:
             return []
         text = prefix + span.text
         off = len(prefix)
-        # Document properties are short fragments where NER is unreliable; the structure layer
-        # (field name -> category) and the rules cover them.
-        use_ner = span.kind != "metadata" and re.search(r"[A-Z]", span.text)
+        # Short document properties ("Marcus Feld", "Draft") are fragments where NER is unreliable;
+        # the structure layer (field name -> category) and the rules cover them. Free-text
+        # properties ("Drafted for Priya Raman", description, comments) are prose and get NER too.
+        prose = span.kind != "metadata" or len(span.text.split()) >= 3
+        use_ner = prose and any(c.isupper() for c in span.text)
         if self.analyzer is not None and use_ner:
             raw = self.analyzer.analyze(text=text, language="en", entities=self.analyzer_entities, score_threshold=0.0)
+            raw = list(raw) + self._recased_ner(text)
         else:
             raw = run_rules(text, OUTPUT_ENTITIES)
         if span.source == "image_ocr":
@@ -92,6 +97,31 @@ class Detector:
                                entity_type=r.entity_type, score=round(r.score, 3), recognizer=name, layer=layer,
                                reasons=reasons))
         out.extend(structure_findings(span, self.allow))
+        return out
+
+    def _recased_ner(self, text: str) -> list:
+        """NER models read capitals as acronyms, so "PRIYA RAMAN" is invisible to them. Runs of
+        ALL-CAPS words are title-cased (same length, so offsets still hold) and NER runs again;
+        only PERSON hits inside those runs are kept."""
+        runs = upper_runs(text)
+        if not runs:
+            return []
+        chars = list(text)
+        for a, b in runs:
+            chars[a:b] = list(text[a:b].title())
+        recased = "".join(chars)
+        if len(recased) != len(text):
+            return []
+        hits = self.analyzer.analyze(text=recased, language="en", entities=["PERSON"], score_threshold=0.0)
+        out = []
+        for r in hits:
+            meta = r.recognition_metadata or {}
+            if meta.get(r.RECOGNIZER_NAME_KEY) != "SpacyRecognizer" or not any(a <= r.start and r.end <= b for a, b in runs):
+                continue
+            meta[r.RECOGNIZER_NAME_KEY] = "ner:spacy-recased"
+            meta["layer"] = "L2 ner"
+            meta["reasons"] = [f"spaCy NER labelled PERSON on case-restored text (score {r.score:.2f})"]
+            out.append(r)
         return out
 
     def detect_document(self, doc: Document) -> list[Finding]:

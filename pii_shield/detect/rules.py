@@ -14,6 +14,7 @@ from presidio_analyzer import AnalysisExplanation, EntityRecognizer, RecognizerR
 
 from ..config import CONTEXT_WORDS
 from . import validators as v
+from .names import gazetteer_names
 
 MONTHS = r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
 STREET = (r"(?:Street|St\.?|Road|Rd\.?|Avenue|Ave\.?|Lane|Ln\.?|Drive|Dr\.?|Boulevard|Blvd\.?|Way|Court|Ct\.?|"
@@ -66,6 +67,22 @@ RULES: list[Rule] = [
     Rule("card_last4", "CREDIT_CARD",
          r"(?i:\bending(?:\s+in)?|\bends\s+in|\blast\s+(?:4|four)(?:\s+digits)?|x{4}|\*{4}|•{4})[\s:#-]{0,4}(\d{4})\b", 0.62,
          group=1),
+    Rule("in_aadhaar", "IN_AADHAAR", r"(?<![\d-])\d{4}([ -]?)\d{4}\1\d{4}(?![\d-])", 0.40, v.check_aadhaar,
+         ctx("IN_AADHAAR")),
+    Rule("in_gstin", "TAX_ID", r"\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b", 0.55, v.check_gstin, ctx("TAX_ID")),
+    Rule("ipv4", "IP_ADDRESS", r"(?<![\d.])(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)(?!\d|\.\d)",
+         0.55, v.check_ip, ctx("IP_ADDRESS")),
+    Rule("ipv6", "IP_ADDRESS", r"(?<![\w:])(?=[0-9A-Fa-f:]*:[0-9A-Fa-f:]*:)(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![\w:])",
+         0.55, v.check_ip, ctx("IP_ADDRESS")),
+    # Credentials are not personal data, but they must never reach a model either.
+    Rule("secret_known", "CREDENTIAL",
+         r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bgh[pousr]_[A-Za-z0-9]{36,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}\b"
+         r"|\bxox[abposr]-[A-Za-z0-9-]{10,}\b|\b[sr]k[_-](?:live|test)[_-][A-Za-z0-9]{16,}\b|\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{20,}"
+         r"|\bAIza[0-9A-Za-z_-]{35}\b|\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"
+         r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----", 0.9),
+    Rule("secret_assigned", "CREDENTIAL",
+         r"(?i:\b(?:api[_ -]?key|secret(?:[_ -]?key)?|access[_ -]?token|auth[_ -]?token|bearer|password|passwd|pwd|client[_ -]?secret)"
+         r"[\"']?\s*(?:[:=]|is)\s*[\"']?)([^\s\"',;]{8,})", 0.75, group=1),
     Rule("iban", "IBAN_CODE", r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})?\b", 0.40, v.check_iban, ctx("IBAN_CODE")),
     Rule("dob_numeric", "DATE_OF_BIRTH", r"\b\d{1,2}[/.-]\d{1,2}[/.-](?:19|20)?\d{2}\b", 0.15, v.check_date,
          ctx("DATE_OF_BIRTH"), requires_context=True),
@@ -113,6 +130,8 @@ IMAGE_RULES: list[Rule] = [
 
 def run_rules(text: str, entities: Optional[list[str]] = None, rules: Optional[list[Rule]] = None) -> list[RecognizerResult]:
     results = []
+    if rules is None and (not entities or "PERSON" in entities):
+        results.extend(_gazetteer(text))
     spans_by_rule: dict[str, list[tuple[int, int]]] = {}
     for rule in RULES if rules is None else rules:
         if entities and rule.entity not in entities:
@@ -156,11 +175,27 @@ def run_rules(text: str, entities: Optional[list[str]] = None, rules: Optional[l
     return results
 
 
+def _gazetteer(text: str) -> list[RecognizerResult]:
+    """Given-name gazetteer (names.py): catches names in capitals or lowercase that NER misses."""
+    out = []
+    for start, end, score, why in gazetteer_names(text):
+        reasons = [why]
+        expl = AnalysisExplanation(recognizer="PiiShieldRules", original_score=score, pattern_name="given_name",
+                                   textual_explanation=why)
+        out.append(RecognizerResult(
+            entity_type="PERSON", start=start, end=end, score=score, analysis_explanation=expl,
+            recognition_metadata={RecognizerResult.RECOGNIZER_NAME_KEY: "rule:given_name",
+                                  RecognizerResult.IS_SCORE_ENHANCED_BY_CONTEXT_KEY: True,
+                                  "reasons": reasons, "layer": "L1 rules"},
+        ))
+    return out
+
+
 class RuleRecognizer(EntityRecognizer):
     """Presidio adapter so the rules run inside the same AnalyzerEngine as the NER models."""
 
     def __init__(self):
-        super().__init__(supported_entities=sorted({r.entity for r in RULES}), name="PiiShieldRules",
+        super().__init__(supported_entities=sorted({r.entity for r in RULES} | {"PERSON"}), name="PiiShieldRules",
                          supported_language="en")
 
     def load(self) -> None:

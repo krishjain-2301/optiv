@@ -9,7 +9,7 @@ from typing import Optional
 
 from ..config import HEADER_CATEGORIES
 from ..models import Finding, Span
-from .names import looks_like_name
+from .names import ANY_CASE, looks_like_name
 
 EMPTY = {"", "-", "–", "—", "n/a", "na", "none", "tbd", "tbc", "nil", "null", "yes", "no", "x", "?", "various", "all"}
 LABEL_LINE = re.compile(r"(?m)^[ \t]*(?P<label>[A-Za-z][A-Za-z .#/()'-]{1,40}?)[ \t]*[:：][ \t]*(?P<value>[^\n]+?)[ \t]*$")
@@ -33,7 +33,8 @@ def header_category(label: Optional[str]) -> Optional[str]:
 
 NON_PERSON_HEADER = re.compile(
     r"vendor|supplier|compan|organi[sz]ation|engagement|product|system|application|project|file|document|"
-    r"template|field|control name|risk name|process name|group|department|team|business unit|site|entity"
+    r"template|field|control name|risk name|process name|group|department|team|business unit|site|entity|"
+    r"task|trigger|rule|stage|workflow|role|attribute|question|report|form\b|queue|object|step|status"
 )
 
 
@@ -43,7 +44,8 @@ def plausible(value: str, cat: str, allow: set[str]) -> tuple[bool, str]:
         return False, "empty"
     digits = sum(c.isdigit() for c in v)
     if cat == "PERSON":
-        return looks_like_name(v, allow), "name-shaped"
+        # The header / label already says "this is a person": accept any letter case.
+        return looks_like_name(v, allow, cases=ANY_CASE), "name-shaped"
     if cat == "EMAIL_ADDRESS":
         return "@" in v or re.search(r"\w[.\s]\w+\s?(?:com|org|net|example)\b", v) is not None, "contains @"
     if cat == "PHONE_NUMBER":

@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 out/
-*.SENSITIVE.json
+*.SENSITIVE.*
 pii_exposure_register.*
 models/*.onnx
 models/*.part

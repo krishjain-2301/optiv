@@ -3,7 +3,12 @@
 * PDF: true redaction (text and image pixels under the box are removed), token printed in the box.
 * DOCX / PPTX: text nodes rewritten in place with tokens; PII in embedded screenshots painted over;
   images that could not be read are blanked (fail closed).
+* DOCX / PPTX: tracked-change deletions, embedded objects (OLE, chart workbooks), the thumbnail and
+  image metadata are removed: none of it is visible content and all of it can hold originals.
+* PDF: annotations, form fields, attachments and links that carry personal data are removed.
 * All formats: author, last-modified-by and other personal document properties are cleared.
+* Every masked file then passes the leak gate (leakcheck.py) before it is written: if any original
+  value from the token vault survives anywhere in it, the file is refused.
 """
 from __future__ import annotations
 
@@ -15,10 +20,12 @@ from lxml import etree
 from PIL import Image, ImageDraw, ImageFont
 
 from ..config import Settings
-from ..extract.ooxml import (W, apply_replacements, author_attribute_units, docx_units, flush_blob_parts,
-                             package_xml_units, pptx_units)
+from ..extract.ooxml import W, apply_replacements, docx_units, flush_blob_parts, package_units, pptx_units, xml_root
 from ..models import Document, Finding, ImageRef, Span
+from .leakcheck import Needles, check_package, check_pdf, find, scrub_package, strip_image_metadata
 from .text import LIVE, merged_ranges
+
+R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
 WITHHOLD = ("unreadable", "low_confidence")
 PERSONAL_CORE_PROPS = ("author", "last_modified_by")
@@ -51,8 +58,21 @@ def _live(findings: list[Finding]) -> list[Finding]:
 
 
 # -------------------------------------------------------------------------------------- PDF
-def mask_pdf(doc: Document, findings: list[Finding], out: Path, settings: Settings) -> Path:
+def mask_pdf(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
     pdf = fitz.open(doc.path)
+    # Comments, highlights and form fields are not extracted, so they are not kept (fail closed).
+    # Links survive unless they are mailto: links or their target holds a value from the vault.
+    for page in pdf:
+        for annot in list(page.annots() or []):
+            page.delete_annot(annot)
+        for widget in list(page.widgets() or []):
+            page.delete_widget(widget)
+        for link in page.get_links():
+            uri = link.get("uri") or ""
+            if uri.startswith("mailto:") or needles is None or find(uri, needles):
+                page.delete_link(link)
+    for name in pdf.embfile_names():
+        pdf.embfile_del(name)
     for f in _live(findings):
         span = doc.span(f.span_id)
         if span.page is None:
@@ -75,6 +95,13 @@ def mask_pdf(doc: Document, findings: list[Finding], out: Path, settings: Settin
     pdf.set_metadata({k: "" for k in ("author", "creator", "producer", "title", "subject", "keywords")})
     pdf.del_xml_metadata()
     pdf.save(out, garbage=4, deflate=True)
+    pdf.close()
+    if needles is not None:
+        try:
+            check_pdf(out, needles, out.name)
+        except Exception:
+            out.unlink(missing_ok=True)
+            raise
     return out
 
 
@@ -161,7 +188,6 @@ def _remove_pictures(package, part_names: dict[str, str]) -> int:
     if not part_names:
         return 0
     n = 0
-    R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
     for part in package.iter_parts():
         el = getattr(part, "_element", None)
         rels = getattr(part, "rels", None)
@@ -197,35 +223,151 @@ def _clear_core(core) -> None:
         setattr(core, prop, "")
 
 
-def mask_docx(doc: Document, findings: list[Finding], out: Path, settings: Settings) -> Path:
+def _xml_parts(package):
+    for part in package.iter_parts():
+        if str(part.partname).endswith(".xml"):
+            root = xml_root(part)
+            if root is not None:
+                yield part, root
+
+
+def _drop_tracked_deletions(package) -> int:
+    """Deleted and moved-away text of tracked changes is invisible but still in the file."""
+    n = 0
+    for _, root in _xml_parts(package):
+        for tag in ("del", "moveFrom"):
+            for el in list(root.iter(f"{{{W}}}{tag}")):
+                el.getparent().remove(el)
+                n += 1
+        for el in list(root.iter(f"{{{W}}}delText", f"{{{W}}}delInstrText")):  # outside a w:del: drop the run
+            run = el.getparent()
+            if run is not None and run.getparent() is not None:
+                run.getparent().remove(run)
+                n += 1
+    return n
+
+
+EMBEDDED = ("/embeddings/", "/activeX/")
+EMBEDDED_RELTYPES = ("/aFChunk", "/oleObject", "/package")
+
+
+def _drop_embedded_objects(package) -> int:
+    """Embedded workbooks (chart data), OLE objects and alt-chunks are whole files the pipeline does
+    not read. They are removed; charts keep rendering from their cached values (which are redacted)."""
+    n = 0
+    for part in list(package.iter_parts()):
+        rels = getattr(part, "rels", None)
+        if not rels:
+            continue
+        doomed = [rid for rid, rel in list(rels.items())
+                  if str(rel.reltype).endswith(EMBEDDED_RELTYPES)
+                  or (not rel.is_external and any(e in str(rel.target_part.partname) for e in EMBEDDED))]
+        if not doomed:
+            continue
+        root = xml_root(part)
+        for rid in doomed:
+            if root is not None:
+                for el in [e for e in root.iter() if isinstance(e.tag, str) and rid in e.attrib.values()]:
+                    _remove_object(el)
+            rels.pop(rid)
+            n += 1
+    return n
+
+
+def _remove_object(el) -> None:
+    if el.getparent() is None:
+        return  # already removed with an ancestor
+    local = etree.QName(el).localname
+    if local in ("externalData", "altChunk"):
+        el.getparent().remove(el)
+        return
+    node = el
+    while node is not None and etree.QName(node).localname not in ("object", "graphicFrame"):
+        node = node.getparent()
+    if node is None:
+        el.getparent().remove(el)
+        return
+    parent = node.getparent()
+    if parent is not None and etree.QName(parent).localname in ("Choice", "Fallback"):
+        node = parent.getparent()  # the whole mc:AlternateContent
+        parent = node.getparent()
+    if parent is None:
+        return
+    if etree.QName(node).localname == "object":  # DOCX: inside a run
+        t = etree.Element(f"{{{W}}}t")
+        t.text = "[EMBEDDED OBJECT WITHHELD]"
+        parent.replace(node, t)
+    else:
+        parent.remove(node)
+
+
+def _drop_thumbnail(package) -> None:
+    rels = getattr(package, "rels", None)
+    if rels is None:
+        rels = package._rels  # python-pptx
+    for rid, rel in list(rels.items()):
+        if str(rel.reltype).endswith("/thumbnail"):
+            rels.pop(rid)
+
+
+def _strip_image_metadata(package) -> None:
+    for part in package.iter_parts():
+        if str(getattr(part, "content_type", "")).startswith("image/"):
+            blob = part.blob
+            new = strip_image_metadata(blob)
+            if new is not blob:
+                part._blob = new
+
+
+def _sanitise_package(package) -> None:
+    _drop_tracked_deletions(package)
+    _drop_embedded_objects(package)
+    _drop_thumbnail(package)
+    _strip_image_metadata(package)
+    flush_blob_parts(package)
+
+
+def _write_package(doc: Document, save, out: Path, needles: Needles | None) -> Path:
+    """Save to memory, scrub surviving values, refuse to write if anything is still there."""
+    buf = io.BytesIO()
+    save(buf)
+    data = buf.getvalue()
+    if needles is not None:
+        data, n = scrub_package(data, needles)
+        if n:
+            doc.warnings.append(f"final scrub replaced {n} value(s) in the masked copy that the walkers had not rewritten")
+        check_package(data, needles, out.name)
+    out.write_bytes(data)
+    return out
+
+
+def mask_docx(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
     import docx
 
     d = docx.Document(doc.path)
     pkg = d.part.package
     ranges = _ranges_by_anchor(doc, findings)
-    _rewrite_units(list(docx_units(d)) + list(package_xml_units(pkg)) + list(author_attribute_units(pkg)), ranges)
+    _rewrite_units(list(docx_units(d)) + list(package_units(pkg)), ranges)
     _remove_pictures(pkg, _mask_images(doc, findings, pkg))
     _clear_core(d.core_properties)
-    flush_blob_parts(pkg)
-    d.save(str(out))
-    return out
+    _sanitise_package(pkg)
+    return _write_package(doc, d.save, out, needles)
 
 
-def mask_pptx(doc: Document, findings: list[Finding], out: Path, settings: Settings) -> Path:
+def mask_pptx(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
     from pptx import Presentation
 
     prs = Presentation(doc.path)
     pkg = prs.part.package
     ranges = _ranges_by_anchor(doc, findings)
-    _rewrite_units(list(pptx_units(prs)) + list(package_xml_units(pkg)) + list(author_attribute_units(pkg)), ranges)
+    _rewrite_units(list(pptx_units(prs)) + list(package_units(pkg)), ranges)
     _remove_pictures(pkg, _mask_images(doc, findings, pkg))
     _clear_core(prs.core_properties)
-    flush_blob_parts(pkg)
-    prs.save(str(out))
-    return out
+    _sanitise_package(pkg)
+    return _write_package(doc, prs.save, out, needles)
 
 
-def mask_image(doc: Document, findings: list[Finding], out: Path, settings: Settings) -> Path:
+def mask_image(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
     boxes = [b for f in _live(findings) for b in finding_boxes(doc.span(f.span_id), f)]
     withhold = any(i.ocr_status in WITHHOLD for i in doc.images)
     new = _paint_image(Path(doc.path).read_bytes(), boxes, withhold)
@@ -234,10 +376,11 @@ def mask_image(doc: Document, findings: list[Finding], out: Path, settings: Sett
     return out
 
 
-def write_masked(doc: Document, findings: list[Finding], out_dir: Path, settings: Settings) -> Path | None:
+def write_masked(doc: Document, findings: list[Finding], out_dir: Path, settings: Settings,
+                 needles: Needles | None = None) -> Path | None:
     stem = Path(doc.file).stem
     fn = {"pdf": mask_pdf, "docx": mask_docx, "pptx": mask_pptx, "image": mask_image}.get(doc.file_type)
     if fn is None:
         return None
     ext = Path(doc.file).suffix or f".{doc.file_type}"
-    return fn(doc, findings, out_dir / f"{stem}.masked{ext}", settings)
+    return fn(doc, findings, out_dir / f"{stem}.masked{ext}", settings, needles)

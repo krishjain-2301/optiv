@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from typing import Iterator, Optional
+from urllib.parse import unquote
 
 from lxml import etree
 
@@ -276,6 +277,123 @@ def author_attribute_units(package) -> Iterator[TextUnit]:
     for i, (val, nodes) in enumerate(sorted(found.items())):
         yield TextUnit(anchor=f"attr#{i}:{val}", kind="metadata", location="comment / tracked-change author",
                        header="author", nodes=[(n, 0, len(val)) for n in nodes], text=val)
+
+
+ALT_TEXT_ELEMENTS = {"docPr", "cNvPr"}
+ALT_TEXT_ATTRS = ("descr", "title")
+
+
+def alt_text_units(package) -> Iterator[TextUnit]:
+    """Alt text and titles of pictures, shapes and charts ("Photo of Priya Raman")."""
+    for part in package.iter_parts():
+        pname = str(part.partname)
+        if not pname.endswith(".xml"):
+            continue
+        root = xml_root(part)
+        if root is None:
+            continue
+        for i, el in enumerate(root.iter()):
+            if not isinstance(el.tag, str) or etree.QName(el).localname not in ALT_TEXT_ELEMENTS:
+                continue
+            for attr in ALT_TEXT_ATTRS:
+                val = el.get(attr, "")
+                if val.strip():
+                    yield TextUnit(anchor=f"alt:{pname}#{i}@{attr}", kind="alt_text",
+                                   location=f"{pname.lstrip('/')}: alt text of '{el.get('name', '?')}'",
+                                   header="alt text", nodes=[(AttrNode(el, attr), 0, len(val))], text=val)
+
+
+# Parts the format-specific walkers do not visit but which hold free text. (kind, description)
+EXTRA_TEXT_PARTS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"^/(word|ppt|xl)/charts/chart\d+\.xml$"), "chart", "chart"),
+    (re.compile(r"^/(word|ppt)/diagrams/(data|drawing)\d*\.xml$"), "diagram", "SmartArt"),
+    (re.compile(r"^/ppt/comments/[^/]+\.xml$"), "comment", "slide comment"),
+    (re.compile(r"^/word/glossary/document\.xml$"), "template", "building blocks"),
+    (re.compile(r"^/ppt/(slideLayouts|slideMasters|notesMasters|handoutMasters)/[^/]+\.xml$"), "template", "layout/master"),
+]
+TEXT_LEAVES = {"t", "v", "text"}  # w:t / a:t, chart values c:v, PowerPoint comment text p:text
+
+
+def extra_part_units(package) -> Iterator[TextUnit]:
+    for part in package.iter_parts():
+        pname = str(part.partname)
+        for pattern, kind, what in EXTRA_TEXT_PARTS:
+            if not pattern.match(pname):
+                continue
+            root = xml_root(part)
+            if root is None:
+                break
+            for i, el in enumerate(root.iter()):
+                if not isinstance(el.tag, str) or etree.QName(el).localname not in TEXT_LEAVES:
+                    continue
+                txt = el.text or ""
+                if not txt.strip() or re.fullmatch(r"[\d.,:%TZ+ -]+|true|false", txt.strip(), re.I):
+                    continue
+                yield TextUnit(anchor=f"{pname}#{i}", kind=kind, location=f"{pname.lstrip('/')}: {what} text",
+                               part=kind, nodes=[(el, 0, len(txt))], text=txt)
+            break
+
+
+class RelTarget:
+    """An external relationship target (hyperlink "mailto:kofi@...", linked file path), editable
+    through the same ``.text`` interface as a text node. Stored URL-decoded."""
+
+    tag = "rel"
+
+    def __init__(self, rel):
+        self.rel = rel
+
+    @property
+    def text(self) -> str:
+        return unquote(self.rel._target)
+
+    @text.setter
+    def text(self, value: str) -> None:
+        self.rel._target = value
+        self.rel.__dict__.pop("target_ref", None)  # python-pptx caches it
+
+
+def link_target_units(package) -> Iterator[TextUnit]:
+    for part in package.iter_parts():
+        rels = getattr(part, "rels", None)
+        if not rels:
+            continue
+        for rid, rel in sorted(rels.items()):
+            if not rel.is_external:
+                continue
+            node = RelTarget(rel)
+            if node.text.strip():
+                yield TextUnit(anchor=f"rel:{part.partname}#{rid}", kind="link",
+                               location=f"{str(part.partname).lstrip('/')}: link target", header="link",
+                               nodes=[(node, 0, len(node.text))], text=node.text)
+
+
+def field_code_units(package) -> Iterator[TextUnit]:
+    """Word field codes (HYPERLINK "mailto:...", AUTHOR, MERGEFIELD values) hidden behind results."""
+    for part in package.iter_parts():
+        pname = str(part.partname)
+        if not pname.startswith("/word/") or not pname.endswith(".xml"):
+            continue
+        root = xml_root(part)
+        if root is None:
+            continue
+        for i, el in enumerate(root.iter(f"{{{W}}}instrText", f"{{{W}}}fldSimple")):
+            node = el if el.tag == f"{{{W}}}instrText" else AttrNode(el, f"{{{W}}}instr")
+            txt = node.text or ""
+            if re.search(r"[A-Za-z]{2,}", txt) and not re.fullmatch(r"\s*(TOC|PAGEREF|PAGE|NUMPAGES|SEQ|REF|DATE|TIME)\b.*", txt, re.S):
+                yield TextUnit(anchor=f"fld:{pname}#{i}", kind="field", location=f"{pname.lstrip('/')}: field code",
+                               nodes=[(node, 0, len(txt))], text=txt)
+
+
+def package_units(package) -> Iterator[TextUnit]:
+    """Everything outside the body that can carry personal data. Shared by extraction and masking,
+    so anchors line up."""
+    yield from package_xml_units(package)
+    yield from author_attribute_units(package)
+    yield from alt_text_units(package)
+    yield from extra_part_units(package)
+    yield from link_target_units(package)
+    yield from field_code_units(package)
 
 
 def image_parts(package) -> Iterator[object]:

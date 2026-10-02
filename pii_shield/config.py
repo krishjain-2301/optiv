@@ -84,7 +84,10 @@ HEADER_CATEGORIES: list[tuple[str, str]] = [
     (r"passport", "PASSPORT"),
     (r"\bpan\b(?! ?card)|permanent account", "IN_PAN"),
     (r"pesel", "PL_PESEL"),
-    (r"\btin\b|tax ?id|taxpayer|\bnip\b|\bein\b", "TAX_ID"),
+    (r"aadhaa?r|\buid\b", "IN_AADHAAR"),
+    (r"\bip\b|ip address", "IP_ADDRESS"),
+    (r"api ?key|secret|password|passwd|\btoken\b|credential", "CREDENTIAL"),
+    (r"\btin\b|tax ?id|taxpayer|\bnip\b|\bein\b|gstin|\bgst\b|\bvat\b", "TAX_ID"),
     (r"national id|nat\.? id|national identifier|id number|identity (?:no|number)", "NATIONAL_ID"),
     (r"employee id|emp(?:loyee)? ?(?:no|#|number)|staff id|badge", "EMPLOYEE_ID"),
     (r"(?:home |postal |residential |mailing )?address", "ADDRESS"),
@@ -96,6 +99,13 @@ HEADER_CATEGORIES: list[tuple[str, str]] = [
         "PERSON",
     ),
 ]
+
+# Regions tried for phone numbers written without "+", by the shape of the number (validators.py).
+PHONE_REGIONS: dict[str, list[str]] = {
+    "trunk_prefix": ["GB", "IN", "DE", "FR", "IT", "NL", "IE", "AU", "ES"],  # national format starts with 0
+    "ten_digit": ["US", "IN"],  # 10 digits, no 0: NANP or Indian mobile
+    "nine_digit": ["PL"],  # 9 digits, no trunk prefix
+}
 
 # Words that, when near a candidate, raise confidence for that category (layer L1 context boost).
 CONTEXT_WORDS: dict[str, list[str]] = {
@@ -111,4 +121,7 @@ CONTEXT_WORDS: dict[str, list[str]] = {
     "IBAN_CODE": ["iban", "account", "bank"],
     "ADDRESS": ["address", "resides", "lives at", "home", "residence", "street", "postal"],
     "NATIONAL_ID": ["national id", "id number", "identity", "citizen"],
+    "IN_AADHAAR": ["aadhaar", "aadhar", "uid", "uidai", "unique id"],
+    "IP_ADDRESS": ["ip", "ip address", "host", "server", "client", "source", "login from"],
+    "CREDENTIAL": ["key", "api key", "apikey", "secret", "token", "password", "passwd", "pwd", "credential"],
 }

@@ -77,10 +77,17 @@ res.findings["policy.pdf"]        # findings with location, category, token, sco
 
 | File | Contents | Sensitive? |
 |---|---|---|
-| `<name>.extracted.md` | Faithful Markdown of the source (headings, tables, image text) | yes |
+`<name>` keeps the extension (`report.docx.redacted.md`), so files that share a stem never overwrite each other.
+Everything with `SENSITIVE` in its name holds original values; the UI's "download all" zip is built from an
+explicit allow-list of the shareable files below and never includes them.
+
+| File | Contents | Sensitive? |
+|---|---|---|
+| `<name>.extracted.SENSITIVE.md` | Faithful Markdown of the source (headings, tables, image text) | **yes** |
 | `<name>.redacted.md` | Same structure with PII replaced by tokens: **what goes to the LLM** | no |
-| `<name>.masked.<ext>` | Masked copy of the original, same page count/layout, metadata cleared | no |
-| `pii_exposure_register.csv/.xlsx` | Every finding: file, page, location, source type, category, value, token, score, layer, reasons | **yes** |
+| `<name>.masked.<ext>` | Masked copy of the original, same page count/layout, metadata cleared; written only if it passes the leak gate | no |
+| `pii_exposure_register.csv/.xlsx` | Every finding: file, page, location, source type, category, value (partially masked), token, score, layer, reasons | no |
+| `pii_exposure_register.SENSITIVE.csv` | The same with full original values | **yes** |
 | `summary.json` | Per-file counts: OCR pages, images and their status, categories, image-only identifiers, warnings | no |
 | `audit_log.jsonl` | Every decision including dropped candidates, values partially masked | no |
 | `token_vault.SENSITIVE.json` | Token → original value, for authorised re-identification | **yes** |
@@ -94,7 +101,19 @@ res.findings["policy.pdf"]        # findings with location, category, token, sco
 - Text from images that were OCR'd with low confidence is withheld from the LLM text entirely; images that
   cannot be read at all (EMF/WMF) are removed from the masked copies. Scanned-page image regions without
   readable text (photos, badges) are blanked in the masked PDF.
-- Checksums only raise or lower confidence: test-range values (SSN `9xx`, `555` phones) next to a label are kept.
+- Checksums only raise or lower confidence: test-range values (SSN `9xx`, `555` phones, Aadhaar starting 0/1)
+  next to a label are kept.
+- Masked DOCX/PPTX lose what a reader cannot see but a parser can: tracked-change deletions, embedded objects and
+  chart workbooks (charts render from their redacted caches), the thumbnail, image EXIF/XMP/text chunks. Alt text,
+  chart labels, SmartArt, slide comments, link targets (`mailto:`), field codes and free-text document properties
+  are extracted and redacted like body text. Masked PDFs lose annotations, form fields, attachments and mailto links.
+- **Leak gate.** After tokens are assigned, every original value in the vault becomes a needle (as written,
+  XML-escaped, URL-encoded, split across runs, digits-only for long numbers). The LLM text is scrubbed of any
+  needle still present (reported as a warning: detection missed a mention). Each masked file is scrubbed in the
+  safe places (element text, alt text, author attributes, external link targets), then every member, nested
+  packages included, is searched; if a needle survives anywhere the masked file is **not written** and the run
+  reports the file as withheld. Single-word person hits in the review band are not used as needles (a lone
+  "Cloud" flagged by NER must not erase every "cloud"); single-word names match only as written or in capitals.
 
 ## Measuring quality
 
@@ -125,7 +144,37 @@ pytest -q
 
 Unit tests cover validators, rules, name handling and structure; integration tests run the full pipeline on the
 synthetic fixtures and check recall/precision floors, leaks in the redacted text and masked files, token stability,
-traceability of every finding, structure retention and report outputs.
+traceability of every finding, structure retention and report outputs. `tests/test_leaks.py` plants values in
+hidden places (mailto targets, field codes, tracked deletions, description, alt text, PNG metadata, chart caches,
+embedded workbooks, thumbnails) and searches every part of the masked files for them.
+
+### Held-out set
+
+The fixture scores (recall 1.000, precision 0.987 on 76 labels) are optimistic: the fixtures were written
+alongside the detectors. `scripts/make_heldout.py` generates a separate set with Faker (en_IN, pl_PL, de_DE,
+es_ES, en_GB, en_US), with ALL-CAPS, lowercase and OCR-noise variants, sentences with and without keywords, and
+decoy paragraphs. Leaks are counted strictly on the LLM text (a surname left beside a token is a leak). Seed
+`dev` is used for fixing general failure classes; seed `test` is reported (`tests/test_heldout.py`).
+
+Test seed, 219 instances (`en_core_web_lg`):
+
+| | caught |
+|---|---|
+| Phones, e-mails, IPs, IBANs, cards, SSN, Aadhaar | 104/104 |
+| Person names, all variants | 90/115 |
+| ... Title case | 58/60 |
+| ... ALL CAPS | 20/23 |
+| ... OCR noise (1–2 digit-for-letter swaps) | 9/15 |
+| ... lowercase | 3/17 |
+| Decoy paragraphs (false positives) | 0 tokens in 20 |
+
+The test seed was inspected once, before one fix: a labelled Aadhaar starting with `1` leaked and the Aadhaar
+rule was widened (labelled → review band). Treat the Aadhaar line as no longer held out.
+
+**Known limits.** Names leak when no layer has evidence: lowercase names whose given name is not in
+`pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
+that no keyword, header or confirmed mention supports, and names garbled by OCR beyond one or two digit
+confusions. Turning on GLiNER (`--gliner`) is the intended mitigation; it has not been measured here.
 
 ## Layout
 

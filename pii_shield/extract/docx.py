@@ -14,7 +14,7 @@ import docx
 from ..config import Settings
 from ..models import Document, ImageRef, Span
 from .common import IdGen, decode_image, image_spans
-from .ooxml import TextUnit, author_attribute_units, docx_units, image_parts, package_xml_units
+from .ooxml import TextUnit, docx_units, image_parts, package_units
 from .vector import svg_text
 
 
@@ -23,7 +23,7 @@ def extract_docx(path: str | Path, settings: Settings) -> Document:
     doc = Document(file=path.name, path=str(path), file_type="docx")
     ids = IdGen(path.stem[:12])
     d = docx.Document(str(path))
-    units = list(docx_units(d)) + list(package_xml_units(d.part.package)) + list(author_attribute_units(d.part.package))
+    units = list(docx_units(d)) + list(package_units(d.part.package))
     doc.spans.extend(unit_to_span(u, ids(), doc.file) for u in units)
     counts = count_structure(units)
 

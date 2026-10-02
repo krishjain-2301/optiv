@@ -13,6 +13,7 @@ from .detect import Detector
 from .extract import extract
 from .models import Document, Finding
 from .redact.files import write_masked
+from .redact.leakcheck import LeakError, build_needles, scrub_text
 from .redact.text import redacted_markdown
 from .redact.tokens import TokenVault
 from .report import write_reports
@@ -31,6 +32,12 @@ class RunResult:
     timings: dict[str, float] = field(default_factory=dict)
     outputs: dict[str, Path] = field(default_factory=dict)
     errors: dict[str, str] = field(default_factory=dict)
+
+
+def output_stem(file: str) -> str:
+    """"report.docx" -> "report.docx": the extension stays in the name, so report.docx and
+    report.pptx never overwrite each other's outputs."""
+    return Path(file).name
 
 
 _DETECTOR: dict[tuple, Detector] = {}
@@ -79,7 +86,15 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
     progress("Assigning tokens", 0.8)
     vault = TokenVault(detector.person_index)
     vault.assign_all(docs, findings)
-    redacted = {f: redacted_markdown(docs[f], findings[f], settings) for f in docs}
+    needles = build_needles(vault, findings)
+    redacted = {}
+    for f, doc in docs.items():
+        # Leak gate for the LLM text: any vault value still present anywhere in it (a mention the
+        # detectors did not locate) is replaced by its token, and the catch is reported.
+        text, n = scrub_text(redacted_markdown(doc, findings[f], settings), needles)
+        if n:
+            doc.warnings.append(f"final scrub replaced {n} value(s) in the LLM text that the detectors had not located")
+        redacted[f] = text
 
     outputs: dict[str, Path] = {}
     if out_dir is not None:
@@ -87,13 +102,17 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
         out.mkdir(parents=True, exist_ok=True)
         progress("Writing masked files and reports", 0.85)
         for f, doc in docs.items():
-            stem = Path(f).stem
-            (out / f"{stem}.extracted.md").write_text(doc.markdown, encoding="utf-8")
-            (out / f"{stem}.redacted.md").write_text(redacted[f], encoding="utf-8")
+            name = output_stem(f)
+            (out / f"{name}.extracted.SENSITIVE.md").write_text(doc.markdown, encoding="utf-8")
+            outputs[f"redacted:{f}"] = out / f"{name}.redacted.md"
+            outputs[f"redacted:{f}"].write_text(redacted[f], encoding="utf-8")
             try:
-                masked = write_masked(doc, findings[f], out, settings)
+                masked = write_masked(doc, findings[f], out, settings, needles)
                 if masked:
                     outputs[f"masked:{f}"] = masked
+            except LeakError as exc:
+                log.error("masked copy of %s withheld: %s", f, exc)
+                errors[f] = f"masked copy withheld (fail closed): {exc}"
             except Exception as exc:
                 log.exception("masking failed for %s", f)
                 errors[f] = f"masking failed: {type(exc).__name__}: {exc}"

@@ -243,3 +243,132 @@ def test_phone_ocr_variants():
     assert best("D.Kulkarni+918045550182 / Moderate", "PHONE_NUMBER")[1] == "+918045550182"
     t = "(mobile+I917555-0164)."
     assert [t[r.start:r.end] for r in run_rules(t, None, IMAGE_RULES) if r.entity_type == "PHONE_NUMBER"] == ["+I917555-0164"]
+
+
+# ------------------------------------------------------- names: any script, any letter case
+def _redacted(texts, settings=None):
+    """Run the full detector + resolver + propagation over plain paragraphs; return redacted text."""
+    from pii_shield.config import Settings
+    from pii_shield.detect import Detector
+    from pii_shield.models import Document
+    from pii_shield.redact.text import redacted_span_texts
+    from pii_shield.redact.tokens import TokenVault
+
+    s = settings or Settings(use_spacy=False)
+    spans = [Span(id=f"s{i}", file="t", text=t, kind="paragraph", page=1, location=f"p{i}") for i, t in enumerate(texts)]
+    doc = Document(file="t", path="t", file_type="text", pages=1, spans=spans)
+    det = Detector(s)
+    res = det.detect_all({"t": doc})
+    TokenVault(det.person_index).assign_all({"t": doc}, res)
+    red = redacted_span_texts(doc, res["t"], s)
+    return [red.get(sp.id, sp.text) for sp in spans]
+
+
+def test_unicode_name_shapes():
+    for n in ["Hans Müller", "José García", "Łukasz Nowak", "Zoë O'Brien-Ábalos", "Siobhán Ní Bhriain"]:
+        assert looks_like_name(n), n
+    assert looks_like_name("PRIYA RAMAN")
+    assert not looks_like_name("RAMAN")  # a lone capitalised word is an acronym far more often
+    assert not looks_like_name("rahul verma")  # lowercase needs other evidence ...
+    assert looks_like_name("rahul verma", cases=("title", "upper", "lower"))  # ... such as a Name column
+    assert not looks_like_name("Priya RAMAN")
+
+
+def test_trim_keeps_name_like_stopwords():
+    for n in ["Larry Page", "April Smith", "Grace West", "Tom Low"]:
+        s, e = trim_to_name(n)
+        assert n[s:e] == n, n
+    t = "Page 3 Larry Ellison"
+    s, e = trim_to_name(t)
+    assert t[s:e] == "Larry Ellison"
+    t = "Risk Owner April"
+    assert trim_to_name(t) is None or t[slice(*trim_to_name(t))] == "April"
+
+
+def test_gazetteer_any_case():
+    from pii_shield.detect.names import gazetteer_names
+
+    t = "follow up with rahul verma, PRIYA RAMAN and Łukasz Nowak today"
+    got = {t[a:b] for a, b, _, _ in gazetteer_names(t)}
+    assert got == {"rahul verma", "PRIYA RAMAN", "Łukasz Nowak"}
+    assert not gazetteer_names("the rahul approved")  # given name alone is not enough
+
+
+def test_names_in_any_case_are_redacted_rules_only():
+    out = _redacted(["Escalate to Łukasz Nowak.", "PRIYA RAMAN approved; follow up with rahul verma."])
+    assert "Łukasz" not in out[0] and "Nowak" not in out[0]
+    assert "PRIYA" not in out[1] and "rahul" not in out[1] and "verma" not in out[1]
+
+
+def test_propagation_ignores_case_for_full_names():
+    out = _redacted(["Name: Hans Müller", "HANS MÜLLER signed; later hans müller resigned. Müller left."])
+    assert "Müller" not in out[1] and "MÜLLER" not in out[1] and "müller" not in out[1], out[1]
+
+
+def test_single_word_variant_does_not_spread_in_lowercase():
+    from pii_shield.detect.propagation import PersonIndex, propagate
+    from pii_shield.models import Document
+
+    idx = PersonIndex()
+    idx.add("Larry Page", "t")
+    span = Span(id="s", file="f", text="See page 4. Larry signed. LARRY PAGE agreed.", kind="paragraph")
+    hits = {h.text for h in propagate({"f": Document(file="f", path="f", file_type="text", spans=[span])}, idx)}
+    assert "page" not in hits and "Page" not in hits
+    assert {"Larry", "LARRY PAGE"} <= hits
+
+
+# ------------------------------------------------------- coverage: no keyword nearby
+def test_national_landlines_without_keyword():
+    for p in ["020 7946 0958", "0161 496 0000", "030 12345678", "022 2345 6789", "98200 55512", "(212) 555-0193"]:
+        h = best(f"Reach them on {p} after nine.", "PHONE_NUMBER")
+        assert h and h[1] == p and h[2] >= 0.6, (p, h)
+    h = best("Biuro: 22 555 01 87 w godzinach pracy", "PHONE_NUMBER")  # PL: 9 digits, review band or better
+    assert h and h[2] >= 0.35, h
+
+
+def test_dates_years_and_versions_are_not_phones():
+    for t in ["Signed 12-04-1985 in Leeds", "Valid until 14.03.2024", "Revenue 2024 1234 units", "release 1.2.3.4"]:
+        h = best(t, "PHONE_NUMBER")
+        assert h is None or h[2] < 0.35, (t, h)
+
+
+def test_aadhaar():
+    assert v.verhoeff_ok("234123412346")
+    assert best("UID 2341 2341 2346 on file", "IN_AADHAAR")[2] >= 0.6
+    assert best("ref 2341 2341 2346", "IN_AADHAAR")[2] >= 0.6  # valid check digit: no keyword needed
+    h = best("Aadhaar 2345 6789 0123", "IN_AADHAAR")  # check digit fails, but labelled
+    assert h and h[2] >= 0.35
+
+
+def test_gstin():
+    assert v.check_gstin("27AAPFU0939F1ZV")[0] > 0
+    h = best("Supplier 27AAPFU0939F1ZV registered", "TAX_ID")
+    assert h and h[1] == "27AAPFU0939F1ZV" and h[2] >= 0.6
+
+
+def test_ip_addresses():
+    assert best("login from 203.0.113.42 failed", "IP_ADDRESS")[2] >= 0.6
+    assert best("server 10.24.8.17", "IP_ADDRESS")[2] >= 0.6
+    assert best("peer 2001:db8:85a3::8a2e:370:7334 dropped", "IP_ADDRESS")[1] == "2001:db8:85a3::8a2e:370:7334"
+    h = best("meeting at 12:30:45 today", "IP_ADDRESS")
+    assert h is None or h[2] < 0.35
+
+
+def test_credentials():
+    for t, val in [("key sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c", "sk-live-4f9a8b7c6d5e4f3a2b1c0d9e8f7a6b5c"),
+                   ("AKIAIOSFODNN7EXAMPLE was rotated", "AKIAIOSFODNN7EXAMPLE"),
+                   ("password: Hunter2!Hunter2", "Hunter2!Hunter2"),
+                   ("token ghp_" + "a1B2" * 9, "ghp_" + "a1B2" * 9)]:
+        h = best(t, "CREDENTIAL")
+        assert h and h[1] == val and h[2] >= 0.6, (t, h)
+
+
+def test_card_length_number_failing_luhn_is_reviewed_not_dropped():
+    h = best("Reimbursed to 4111 1111 1111 1112 on Friday.", "CREDIT_CARD")
+    assert h and 0.35 <= h[2], h
+
+
+def test_labelled_out_of_range_aadhaar_still_caught():
+    assert best("Aadhaar 1416 1090 6499", "IN_AADHAAR")[2] >= 0.35
+    h = best("ref 1416 1090 6499", "IN_AADHAAR")
+    assert h is None or h[2] < 0.35

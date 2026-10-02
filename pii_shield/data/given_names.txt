@@ -1,0 +1,64 @@
+# Given names used by the L1 name gazetteer: a listed given name followed by a surname-shaped word
+# is a PERSON candidate in any letter case ("rahul verma", "PRIYA RAMAN", "Łukasz Nowak").
+# Lowercase, one per line, accents kept (matching also tries the accent-stripped form).
+# Deliberately excluded: names that are everyday English words (may, will, mark, bill, grace, hope,
+# rose, joy, dawn, faith, summer, june, april, august, jack, frank, art, sky, ...), which would turn
+# ordinary lowercase prose into false positives. NER and propagation still cover those names.
+
+# --- English / US / UK
+aaron abigail adam adrian aidan alan albert alex alexander alexandra alice alicia alison amanda amelia
+amy andrea andrew angela anna anne anthony arthur ashley barbara benjamin beth brandon brenda brian bridget
+caitlin cameron carl carlos caroline catherine charles charlotte chloe christina christine christopher
+claire clara colin connor craig cynthia daniel danielle darren david deborah denise dennis derek diana diane
+donald donna dorothy douglas dylan edward eleanor elizabeth ellen emily emma eric ethan evelyn fiona gareth
+gary gavin george gerald gillian gordon graham gregory hannah harold harry helen henry ian
+isabel isabella jacob james jamie janet janice jason jeffrey jennifer jeremy jessica joan joanna
+joanne john jonathan joseph joshua joyce judith julia julie justin karen katherine kathleen kathryn katie
+keith kelly kenneth kevin kimberly kyle laura lauren leah linda lindsay lisa logan louise lucy luke lynn
+madison margaret maria marie marilyn martha martin matthew megan melanie melissa michael michelle natalie
+nathan nicholas nicola nicole noah olivia oliver pamela patricia patrick paul peter philip rachel rafael
+raymond rebecca richard robert roger ronald ruth ryan samantha samuel sandra sarah scott sean sharon shirley
+simon sophie stephanie stephen steven stuart susan teresa theresa thomas timothy tyler valerie vanessa
+victoria vincent walter wayne william zachary
+
+# --- India
+aarav aditi aditya akash amit amita amitabh anand ananya anil anita anjali ankit anup anusha arjun arun aruna
+ashok bhavna deepak deepika devendra dhruv divya gaurav geeta girish gopal hari harish isha ishaan jaya
+jayant kabir kajal kamal karan kavita kiran krishna kunal lakshmi madhu mahesh manish manoj meena meera mohan
+mukesh nandini naveen neha nikhil nisha nitin pankaj pooja pradeep prakash pranav prasad praveen preeti priya
+priyanka rahul raj rajesh rajiv rakesh ramesh ravi rekha rhea rohan rohit sachin sameer sandeep sanjay sanjana
+santosh sarita shalini shankar shanti sharad shilpa shivani shreya shruti siddharth sneha sonal sunil sunita
+suresh swati tanvi tarun usha varun vijay vikas vikram vinay vinod vishal yash yogesh zoya abhishek ajay alok
+arvind bharat chetan dinesh ganesh hemant jagdish jatin kishore lalit mahendra naresh pawan raghav
+rajendra sagar satish shashi subhash sudhir sumit tushar umesh vivek
+
+# --- Poland
+agata agnieszka aleksandra andrzej anna barbara bartosz beata dariusz dorota elżbieta ewa grzegorz hanna
+jacek jadwiga jakub janina jarosław jerzy joanna józef kamil karolina katarzyna kazimierz krystyna krzysztof
+łukasz maciej magdalena małgorzata marcin marek mariusz marta mateusz michał mirosław monika natalia paweł
+piotr przemysław radosław renata robert ryszard sławomir stanisław stefan szymon tadeusz teresa tomasz
+urszula wiesław wojciech zbigniew zofia zuzanna
+
+# --- Germany / Austria / Switzerland
+andreas anke bernd birgit claudia dieter dirk elke erik florian friedrich gabriele gerhard
+günter hans heike heinz helga holger ingrid jens jörg jürgen karin karl klaus kerstin lena lukas manfred
+manuela markus matthias monika norbert petra rainer ralf renate sabine sebastian siegfried silke stefanie
+susanne svenja thorsten tobias ulrich ursula uwe volker werner wolfgang
+
+# --- Spanish / Portuguese / Latin America
+alejandro alfonso alicia álvaro ana andrés antonio beatriz carmen catalina cristina diego eduardo elena
+enrique esteban fernando francisco gabriel gonzalo guillermo ignacio isabel javier joaquín jorge josé
+juan julián laura lucía luis manuel marcos mariana mario marta miguel mónica nicolás pablo paula pedro rafael
+raúl ricardo roberto rodrigo rosa santiago sergio sofía teresa valentina vicente joão thiago gonçalo
+
+# --- French / Italian
+alain amélie antoine aurélie benoît céline chantal christophe claude dominique élodie émile françois
+frédéric geneviève hélène jacques jean-luc jean-pierre julien laurent léa louis luc marc mathieu nathalie
+océane olivier philippe pierre sébastien stéphane sylvie thierry valérie yves alessandro alessia andrea
+antonella chiara davide elena emanuele federica francesca giacomo gianluca giovanni giulia giuseppe lorenzo
+luca marco matteo paolo riccardo roberta salvatore silvia stefano valentina
+
+# --- East Asia / Middle East / Africa
+chen hiroshi hiroko kenji ling mei ming naoko satoshi takashi wei xiaoming yuki yumi zhang
+ahmed ali amir aisha fatima hassan hussein ibrahim karim khalid layla mariam mohammed muhammad mustafa nadia
+omar rashid samir yasmin youssef zainab ama amara chidi chinedu femi kwame nkechi oluwaseun tendai thabo
