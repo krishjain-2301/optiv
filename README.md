@@ -93,6 +93,22 @@ explicit allow-list of the shareable files below and never includes them.
 | `token_vault.SENSITIVE.enc.json` | Token → original value, AES-256-GCM encrypted; written only when `PII_SHIELD_VAULT_KEY` (CLI) or the UI passphrase is set. Open with `python -m pii_shield vault-open` | **yes** |
 | `evaluation.json` | With `--gold`: recall, precision, leaks, per-category/source breakdown, structure retention | no |
 
+## Exposure score
+
+`summary.json` (and the Overview tab) gives each file an exposure profile (`pii_shield/exposure.py`, weights in
+`config.py`):
+
+- **score**: sum of sensitivity weights (1-10) over every PII instance found: credentials and government or
+  financial IDs 8-10, date of birth 6, address 5, phone/e-mail 4, name 3, vendor ID 1.
+- **per_1k_words**, so long and short files compare; **by_page** for the page/slide heatmap.
+- **rating**: `critical` if any weight ≥ 9 instance is present, else `high` / `medium` / `low` by density.
+- **residual** after redaction, in three parts kept apart because they are known to different degrees:
+  `known` (values left in outputs: 0 by construction, plus what the leak gate had to catch, and whether the
+  masked copy was written or withheld), `unreadable` (images withheld, OCR words masked), and
+  `estimated_missed` (found × miss rate from the held-out set; an estimate, with its basis recorded).
+
+`exposure_ranking` lists files by density, so the riskiest artifacts are reviewed first.
+
 ## Fail-closed behaviour
 
 - A file that cannot be parsed is reported and produces no output (never passed through).

@@ -168,6 +168,31 @@ with tabs[0]:
                      "images": sm["images"]["total"], "findings": sm["findings"], "auto-redacted": sm["redacted"],
                      "review queue": sm["review_queue"], "extract s": res.timings.get(f"extract:{f}", "")})
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    st.markdown("**Exposure** (sensitivity-weighted PII; see README for weights) and **residual risk after redaction**")
+    exp = {f: file_summary(res.docs[f], res.findings[f])["exposure"] for f in files}
+    st.dataframe(pd.DataFrame([{
+        "file": f, "rating": e["rating"], "score": e["score"], "per 1k words": e["per_1k_words"],
+        "masked copy": e["residual"]["known"]["masked_copy"],
+        "caught by leak gate": e["residual"]["known"]["llm_text_values_caught_by_gate"]
+                               + e["residual"]["known"]["masked_values_caught_by_gate"],
+        "unreadable images withheld": e["residual"]["unreadable"]["images_withheld"],
+        "est. missed instances": e["residual"]["estimated_missed"]["instances"],
+        "est. residual per 1k words": e["residual"]["estimated_missed"]["per_1k_words"],
+    } for f, e in exp.items()]), hide_index=True, width="stretch")
+    st.caption("Estimated missed = found instances × miss rate measured on the held-out set "
+               f"({next(iter(exp.values()))['residual']['estimated_missed']['basis'] if exp else ''}).")
+    heat = pd.DataFrame({f: e["by_page"] for f, e in exp.items()}).T.fillna(0.0)
+    if not heat.empty:
+        heat = heat[sorted(heat.columns, key=lambda c: (c == "document", int(c) if c.isdigit() else 0))]
+        top = float(heat.values.max()) or 1.0
+
+        def _shade(v: float) -> str:
+            a = min(v / top, 1.0)
+            return f"background-color: rgba(214, 40, 40, {a:.2f}); color: {'white' if a > 0.55 else 'inherit'}"
+
+        st.markdown("**Exposure by page / slide** (darker = more sensitive PII on that page)")
+        st.dataframe(heat.style.map(_shade).format("{:.0f}"), width="stretch")
     if not df_all.empty:
         a, b = st.columns(2)
         a.markdown("**Findings by category and source**")

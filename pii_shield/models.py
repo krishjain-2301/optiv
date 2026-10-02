@@ -76,6 +76,7 @@ class Document:
     ocr_pages: list[int] = field(default_factory=list)
     structure: dict = field(default_factory=dict)  # counts of headings, tables, rows, cells, ...
     warnings: list[str] = field(default_factory=list)
+    gate: dict = field(default_factory=dict)  # leak-gate outcome: masked written/withheld, values scrubbed
     page_sizes: dict[int, tuple[float, float]] = field(default_factory=dict)
     page_images: dict[int, bytes] = field(default_factory=dict)  # rendered PNGs for scanned pages
 

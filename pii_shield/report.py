@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from .exposure import file_exposure
 from .models import Document, Finding
 
 COLUMNS = ["file", "page", "location", "kind", "source", "context_type", "entity_type", "text", "token", "score",
@@ -90,6 +91,14 @@ def file_summary(doc: Document, findings: list[Finding]) -> dict:
         "by_layer": dict(Counter(f.layer for f in live).most_common()),
         "image_only_values": image_only_values(live),
         "warnings": doc.warnings,
+        "exposure": (exp := file_exposure(doc, findings)),
+        # flat copies for the spreadsheet summary
+        "exposure_score": exp["score"],
+        "exposure_per_1k_words": exp["per_1k_words"],
+        "exposure_rating": exp["rating"],
+        "residual_estimated_missed": exp["residual"]["estimated_missed"]["instances"],
+        "residual_unreadable_images": exp["residual"]["unreadable"]["images_withheld"],
+        "masked_copy": exp["residual"]["known"]["masked_copy"],
     }
 
 
@@ -139,9 +148,14 @@ def write_reports(out_dir: Path, docs: dict[str, Document], findings: dict[str, 
             pivot = df.pivot_table(index="entity_type", columns="context_type", values="text", aggfunc="count", fill_value=0)
             pivot.to_excel(xw, sheet_name="category_x_context")
     paths["summary_json"] = out_dir / "summary.json"
+    summaries = [file_summary(docs[f], fs) for f, fs in findings.items()]
     paths["summary_json"].write_text(json.dumps({
         "run_id": run_id, "components": components,
-        "files": [file_summary(docs[f], fs) for f, fs in findings.items()],
+        "exposure_ranking": [
+            {"file": s["file"], "rating": s["exposure_rating"], "score": s["exposure_score"],
+             "per_1k_words": s["exposure_per_1k_words"], "estimated_missed": s["residual_estimated_missed"]}
+            for s in sorted(summaries, key=lambda s: -s["exposure_per_1k_words"])],
+        "files": summaries,
     }, indent=2, default=str), encoding="utf-8")
     paths["audit_log"] = out_dir / "audit_log.jsonl"
     with open(paths["audit_log"], "w", encoding="utf-8") as fh:

@@ -334,6 +334,7 @@ def _write_package(doc: Document, save, out: Path, needles: Needles | None) -> P
     data = buf.getvalue()
     if needles is not None:
         data, n = scrub_package(data, needles)
+        doc.gate["masked_scrubbed"] = n
         if n:
             doc.warnings.append(f"final scrub replaced {n} value(s) in the masked copy that the walkers had not rewritten")
         check_package(data, needles, out.name)

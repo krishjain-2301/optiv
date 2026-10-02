@@ -116,6 +116,7 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
         # Leak gate for the LLM text: any vault value still present anywhere in it (a mention the
         # detectors did not locate) is replaced by its token, and the catch is reported.
         text, n = scrub_text(redacted_markdown(doc, findings[f], settings), needles)
+        doc.gate["llm_text_scrubbed"] = n
         if n:
             doc.warnings.append(f"final scrub replaced {n} value(s) in the LLM text that the detectors had not located")
         redacted[f] = text
@@ -134,10 +135,13 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
                 masked = write_masked(doc, findings[f], out, settings, needles)
                 if masked:
                     outputs[f"masked:{f}"] = masked
+                    doc.gate["masked"] = "written"
             except LeakError as exc:
+                doc.gate["masked"] = "withheld"
                 log.error("masked copy of %s withheld: %s", f, exc)
                 errors[f] = f"masked copy withheld (fail closed): {exc}"
             except Exception as exc:
+                doc.gate["masked"] = "failed"
                 log.exception("masking failed for %s", f)
                 errors[f] = f"masking failed: {type(exc).__name__}: {exc}"
         if settings.vault_passphrase:

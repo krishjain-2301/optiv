@@ -105,6 +105,27 @@ HEADER_CATEGORIES: list[tuple[str, str]] = [
     ),
 ]
 
+# Exposure score (exposure.py). Sensitivity of one instance, 1-10: harm if it reached the wrong
+# party. Government and financial identifiers and credentials are at the top; a work e-mail or a
+# name alone is low but not zero.
+SENSITIVITY: dict[str, float] = {
+    "CREDENTIAL": 10, "US_SSN": 10, "PASSPORT": 10, "NATIONAL_ID": 10, "IN_AADHAAR": 10, "PL_PESEL": 10,
+    "CREDIT_CARD": 9, "IBAN_CODE": 8, "IN_PAN": 8, "TAX_ID": 7, "DATE_OF_BIRTH": 6, "ADDRESS": 5,
+    "PHONE_NUMBER": 4, "EMAIL_ADDRESS": 4, "PERSON": 3, "IP_ADDRESS": 3, "EMPLOYEE_ID": 3, "VENDOR_ID": 1,
+    "LOW_CONFIDENCE_OCR": 2, "_default": 3,
+}
+EXPOSURE_RATING = {"critical_weight": 9, "high_density": 25.0, "medium_density": 5.0}  # density = score per 1k words
+# Share of instances the detectors miss, by (category, source), measured on the held-out test seed
+# (2026-10-02, en_core_web_lg). Categories with no observed miss use the rule-of-three upper bound
+# 3/n over all structured instances (104). Re-measure after detection changes.
+MISS_RATES: dict = {
+    ("PERSON", "native"): 25 / 115,
+    ("PERSON", "ocr"): 6 / 15,
+    "_default": 3 / 104,
+    "_basis": "held-out test seed 2026-10-02: PERSON 25/115 missed (OCR-noise names 6/15); "
+              "structured identifiers 0/104 missed, rule-of-three bound 3/104 used",
+}
+
 # Regions tried for phone numbers written without "+", by the shape of the number (validators.py).
 PHONE_REGIONS: dict[str, list[str]] = {
     "trunk_prefix": ["GB", "IN", "DE", "FR", "IT", "NL", "IE", "AU", "ES"],  # national format starts with 0
