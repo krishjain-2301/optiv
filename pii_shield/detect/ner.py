@@ -12,12 +12,9 @@ import spacy
 from presidio_analyzer import AnalysisExplanation, EntityRecognizer, RecognizerResult
 from presidio_analyzer.nlp_engine import NlpEngineProvider
 
+from ..errors import ModelMissing
+
 log = logging.getLogger(__name__)
-
-
-class ModelMissing(RuntimeError):
-    """A detection model the settings ask for is not installed. Never silently downgraded: a
-    pipeline that quietly drops to rules only (or to a weaker model) misses names without saying so."""
 
 
 def build_nlp_engine(model: str):

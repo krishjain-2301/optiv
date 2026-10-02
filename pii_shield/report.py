@@ -64,6 +64,7 @@ def findings_frame(findings: dict[str, list[Finding]], include_dropped: bool = F
             d["reasons"] = "; ".join(f.reasons if reveal else mask_reasons(f.reasons, values))
             if not reveal:
                 d["text"] = mask_value(f.text)
+                d["location"] = mask_reasons([f.location], values)[0]  # sheet / shape names can be names
             rows.append(d)
     df = pd.DataFrame(rows, columns=COLUMNS + ["span_id", "start", "end"]) if rows else pd.DataFrame(columns=COLUMNS)
     return df[COLUMNS + [c for c in ("span_id", "start", "end") if c in df.columns]]
@@ -119,7 +120,8 @@ def audit_records(findings: dict[str, list[Finding]], run_id: str) -> list[dict]
     for fs in findings.values():
         for f in fs:
             recs.append({
-                "run_id": run_id, "timestamp": ts, "file": f.file, "page": f.page, "location": f.location,
+                "run_id": run_id, "timestamp": ts, "file": f.file, "page": f.page,
+                "location": mask_reasons([f.location], values)[0],
                 "span_id": f.span_id, "start": f.start, "end": f.end, "entity_type": f.entity_type,
                 "value_masked": mask_value(f.text), "token": f.token, "score": f.score, "decision": f.decision,
                 "layer": f.layer, "recognizer": f.recognizer, "reasons": mask_reasons(f.reasons, values),

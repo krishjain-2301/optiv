@@ -17,6 +17,8 @@ from typing import Optional
 
 import numpy as np
 
+from ..errors import ModelMissing
+
 log = logging.getLogger(__name__)
 
 
@@ -106,13 +108,12 @@ class RapidOcrEngine(OcrEngine):
 
         rec = english_rec_model()
         if rec is None:
-            log.warning("English OCR model not found (run: python scripts/fetch_models.py); "
-                        "falling back to the bundled model, which drops spaces between words")
-            self._engine = RapidOCR(use_cls=False)
-            self.model = "ch_PP-OCRv4 (fallback)"
-        else:
-            self._engine = RapidOCR(rec_model_path=str(rec), use_cls=False)
-            self.model = rec.stem
+            # The bundled recogniser drops spaces between words ("PriyaRaman"), which hides names
+            # from NER: not an acceptable silent fallback.
+            raise ModelMissing("English OCR model not found. Run `python scripts/fetch_models.py` "
+                               "(one-time 9 MB download) or set PII_SHIELD_REC_MODEL.")
+        self._engine = RapidOCR(rec_model_path=str(rec), use_cls=False)
+        self.model = rec.stem
 
     def read(self, img: np.ndarray) -> list[OcrLine]:
         if img.ndim == 2:

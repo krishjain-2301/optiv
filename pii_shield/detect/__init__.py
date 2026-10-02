@@ -17,7 +17,8 @@ from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 
 from ..config import Settings
 from ..models import Document, Finding, Span
-from .ner import ModelMissing, build_nlp_engine, load_gliner
+from ..errors import ModelMissing
+from .ner import build_nlp_engine, load_gliner
 from .names import upper_runs
 from .propagation import build_index, propagate
 from .resolver import finalise

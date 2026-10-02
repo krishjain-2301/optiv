@@ -1,7 +1,11 @@
 """Tunable settings. Everything a reviewer might question lives here, in one place."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
 
 
 @dataclass
@@ -37,23 +41,28 @@ class Settings:
 
     # --- vocabularies -------------------------------------------------------------
     allow_list: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_LIST))
-    extra_deny_list: list[str] = field(default_factory=list)  # names to always redact
+    extra_deny_list: list[str] = field(default_factory=lambda: list(ORG["deny_list"]))  # names to always redact
 
 
+def load_org_config(path: str | Path | None = None) -> dict:
+    """Organisation-specific vocabulary (allow-list, deny-list, internal ID formats) from YAML:
+    ``path``, else $PII_SHIELD_ORG_CONFIG, else the bundled pii_shield/data/org.yaml."""
+    p = Path(path or os.environ.get("PII_SHIELD_ORG_CONFIG") or Path(__file__).parent / "data" / "org.yaml")
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    for i, rule in enumerate(data.get("id_patterns") or []):
+        missing = {"name", "entity", "pattern", "score"} - set(rule)
+        if missing:
+            raise ValueError(f"{p}: id_patterns[{i}] is missing {sorted(missing)}")
+    data.setdefault("allow_list", [])
+    data.setdefault("deny_list", [])
+    data.setdefault("id_patterns", [])
+    data["path"] = str(p)
+    return data
+
+
+ORG = load_org_config()
 # Organisation, product, system and role names that must never be treated as people.
-DEFAULT_ALLOW_LIST = [
-    "Cadence", "Cadence Design Systems", "Optiv", "OneTrust", "ServiceNow", "Archer", "Microsoft",
-    "Microsoft Teams", "SharePoint", "Outlook", "Excel", "Word", "PowerPoint", "Azure", "AWS", "Google",
-    "Okta", "Workday", "Salesforce", "SAP", "Oracle", "Jira", "Confluence", "Slack", "Zoom", "Acme",
-    "AcmeCo", "Vendor Tier", "Risk Owner", "Control Owner", "Process Owner", "Business Owner",
-    "Data Owner", "Risk Manager", "Risk Committee", "Audit Committee", "Board", "Board of Directors",
-    "Internal Audit", "Compliance", "Legal", "Procurement", "Finance", "Human Resources", "HR",
-    "Information Security", "InfoSec", "IT", "CISO", "CIO", "CEO", "CFO", "COO", "CRO", "CTO", "DPO",
-    "GRC", "TPRM", "RCSA", "KRI", "KPI", "BCP", "DR", "SOC", "ISO", "NIST", "GDPR", "SOX", "PCI DSS",
-    "Appendix", "Section", "Policy", "Procedure", "Standard", "Guideline", "Framework", "Register",
-    "Questionnaire", "Assessment", "Inherent Risk", "Residual Risk", "Risk Appetite", "Risk Register",
-    "Third Party", "Third-Party", "Vendor", "Supplier", "Engagement", "Dashboard", "Admin", "Administrator",
-]
+DEFAULT_ALLOW_LIST: list[str] = list(ORG["allow_list"])
 
 # Words that look like names to a statistical model but are business vocabulary.
 NOT_A_NAME_WORDS = {

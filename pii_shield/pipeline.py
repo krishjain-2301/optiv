@@ -10,7 +10,9 @@ from typing import Callable, Optional
 
 from .config import Settings
 from .detect import Detector
+from .errors import ModelMissing
 from .extract import extract
+from .extract.ocr import get_engine
 from .models import Document, Finding
 from .redact.files import write_masked
 from .redact.leakcheck import LeakError, build_needles, scrub_package, scrub_text
@@ -89,12 +91,15 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
     t0 = time.perf_counter()
     # Models first: a missing NER model must stop the run before minutes of OCR, not after.
     detector = get_detector(settings)
+    get_engine(settings.ocr_engine)  # the OCR model too (cached; raises ModelMissing)
     for i, p in enumerate(paths):
         p = Path(p)
         progress(f"Extracting {p.name}", i / max(len(paths), 1) * 0.6)
         t = time.perf_counter()
         try:
             doc = extract(p, settings)
+        except ModelMissing:
+            raise  # a missing model is a setup error for the whole run, not one bad file
         except Exception as exc:  # fail closed: a file we cannot read is reported, never passed on
             log.exception("extraction failed for %s", p)
             errors[p.name] = f"{type(exc).__name__}: {exc}"

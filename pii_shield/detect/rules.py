@@ -12,7 +12,7 @@ from typing import Callable, Optional
 
 from presidio_analyzer import AnalysisExplanation, EntityRecognizer, RecognizerResult
 
-from ..config import CONTEXT_WORDS
+from ..config import CONTEXT_WORDS, ORG
 from . import validators as v
 from .names import gazetteer_names
 
@@ -53,10 +53,8 @@ RULES: list[Rule] = [
          # A leading "+" may follow a letter: OCR glues names to numbers ("Whitfield+1(212)555-0147").
          r"(?:(?<![0-9/+-])\+\d{1,3}[\s.-]?|(?<![\w/+-]))(?:\(\d{1,5}\)[\s.-]?)?\d{1,12}(?:[\s.-]\d{1,8}){0,5}(?![\w/-])",
          0.40, v.check_phone, ctx("PHONE_NUMBER"), min_digits=7),
-    # OCR glues neighbours on ("EMP-41877sV", "EMP-41077IAM"), so no trailing \b. O/I/l read for 0/1 are
-    # tolerated inside the number, but an ID must end on a real digit unless nothing alphanumeric follows.
-    Rule("cadence_person_id", "EMPLOYEE_ID", r"(?<![0-9])(?:EMP|DIR|STF|CON|USR)-(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))", 0.88),
-    Rule("cadence_vendor_id", "VENDOR_ID", r"(?<![0-9])(?:MER|VEN|SUP)-[A-Z]{2}-(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))", 0.80),
+    # Organisation-specific identifier formats come from pii_shield/data/org.yaml (id_patterns).
+    *[Rule(r["name"], r["entity"], r["pattern"], float(r["score"]), None, ctx(r["entity"])) for r in ORG["id_patterns"]],
     Rule("us_ssn", "US_SSN", r"(?<![\d-])\d{3}[- ]\d{2}[- ]\d{4}(?![\d-])", 0.45, v.check_ssn, ctx("US_SSN")),
     Rule("passport", "PASSPORT", r"\b[A-Z]{1,2}\d{6,8}\b", 0.20, None, ctx("PASSPORT"), requires_context=True),
     Rule("in_pan", "IN_PAN", r"\b[A-Z]{5}\d{4}[A-Z]\b", 0.45, v.check_pan, ctx("IN_PAN")),

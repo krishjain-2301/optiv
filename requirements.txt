@@ -1,28 +1,33 @@
+# Exact versions the test suite and the held-out numbers were measured with (Python 3.12, Windows 11).
+# Upgrade deliberately: re-run `pytest` and the held-out set, and update the README numbers.
+
 # Core pipeline (all offline)
-presidio-analyzer>=2.2.355
-spacy>=3.7
-pymupdf>=1.24
-python-docx>=1.1
-python-pptx>=1.0
-rapidocr-onnxruntime>=1.3
-opencv-python>=4.9            # also required by rapidocr-onnxruntime; do not add the -headless variant alongside it
-numpy>=1.26
-Pillow>=10.0
-phonenumbers>=8.13
-lxml>=5.0
-pandas>=2.1
-openpyxl>=3.1
-rapidfuzz>=3.6
-
-# Demo UI
-streamlit>=1.35
-
-# Tests
-pytest>=8.0
-faker==37.4.0                 # held-out test set (scripts/make_heldout.py); tests only
+presidio-analyzer==2.2.364
+spacy==3.8.16
+en_core_web_lg @ https://github.com/explosion/spacy-models/releases/download/en_core_web_lg-3.8.0/en_core_web_lg-3.8.0-py3-none-any.whl
+pymupdf==1.28.2
+python-docx==1.2.0
+python-pptx==1.0.2
+rapidocr-onnxruntime==1.4.4
+onnxruntime==1.30.0
+opencv-python==5.0.0.93       # also required by rapidocr-onnxruntime; do not add the -headless variant alongside it
+numpy==2.4.6
+pillow==12.3.0
+phonenumbers==9.0.40
+lxml==6.1.3
+pandas==3.0.6
+openpyxl==3.1.5
+rapidfuzz==3.14.6
+PyYAML==6.0.3                 # pii_shield/data/config.yaml
 cryptography==45.0.7          # token vault encryption (AES-256-GCM)
 
-# spaCy model (install once):  python -m spacy download en_core_web_lg   (or en_core_web_sm)
-# Optional extras:
+# Demo UI
+streamlit==1.64.0
+
+# Tests
+pytest==9.1.1
+faker==37.4.0                 # held-out test set (scripts/make_heldout.py)
+
+# Optional extras (not pinned, not measured):
 #   pip install gliner            # GLiNER-PII zero-shot model (pulls torch)
 #   pip install pytesseract       # + Tesseract binary on PATH, for --ocr tesseract

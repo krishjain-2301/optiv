@@ -368,6 +368,54 @@ def mask_pptx(doc: Document, findings: list[Finding], out: Path, settings: Setti
     return _write_package(doc, prs.save, out, needles)
 
 
+SHEET_TITLE_FORBIDDEN = str.maketrans({"[": "(", "]": ")", ":": "-", "*": "-", "?": "-", "/": "-", "\\": "-"})
+
+
+def mask_xlsx(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
+    """Rewrite every cell, comment, sheet name, header/footer and property that held PII. Images and
+    charts are dropped (not read, so not trusted). The saved workbook then passes the leak gate."""
+    import openpyxl
+    from openpyxl.comments import Comment
+
+    from ..extract.xlsx import HEADER_PARTS, walk
+    from .text import apply
+
+    wb = openpyxl.load_workbook(doc.path, data_only=False)
+    ranges = _ranges_by_anchor(doc, findings)
+    new: dict[str, str] = {}
+    for anchor, _kind, _loc, text, _extra in walk(wb):
+        if anchor in ranges:
+            new[anchor] = apply(text, ranges[anchor])
+    for anchor, value in new.items():
+        if anchor.startswith("prop:"):
+            setattr(wb.properties, anchor[5:], value)
+            continue
+        si = int(anchor.split("]")[0].split("[")[1])
+        ws = wb.worksheets[si]
+        rest = anchor.split("/", 1)[1]
+        if rest == "title":
+            ws.title = value.translate(SHEET_TITLE_FORBIDDEN)[:31]
+        elif rest.split("/")[0] in HEADER_PARTS:
+            part, pos = rest.split("/")
+            getattr(getattr(ws, part), pos).text = value
+        elif rest.endswith("/comment"):
+            cell = ws[rest.split("/")[0]]
+            cell.comment = Comment(value, cell.comment.author if cell.comment else "")
+        elif rest.endswith("/comment-author"):
+            cell = ws[rest.split("/")[0]]
+            cell.comment = Comment(cell.comment.text, value)
+        else:  # r[i]/c[j], relative to the sheet's used range (see extract/xlsx.py)
+            span = next(s for s in doc.spans if s.anchor == anchor)
+            coord = span.location.rsplit("cell ", 1)[1]
+            ws[coord].value = value
+    for ws in wb.worksheets:
+        ws._images = []
+        ws._charts = []
+    wb.properties.creator = ""
+    wb.properties.lastModifiedBy = ""
+    return _write_package(doc, wb.save, out, needles)
+
+
 def mask_image(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
     boxes = [b for f in _live(findings) for b in finding_boxes(doc.span(f.span_id), f)]
     withhold = any(i.ocr_status in WITHHOLD for i in doc.images)
@@ -380,7 +428,7 @@ def mask_image(doc: Document, findings: list[Finding], out: Path, settings: Sett
 def write_masked(doc: Document, findings: list[Finding], out_dir: Path, settings: Settings,
                  needles: Needles | None = None) -> Path | None:
     stem = Path(doc.file).stem
-    fn = {"pdf": mask_pdf, "docx": mask_docx, "pptx": mask_pptx, "image": mask_image}.get(doc.file_type)
+    fn = {"pdf": mask_pdf, "docx": mask_docx, "pptx": mask_pptx, "xlsx": mask_xlsx, "image": mask_image}.get(doc.file_type)
     if fn is None:
         return None
     ext = Path(doc.file).suffix or f".{doc.file_type}"

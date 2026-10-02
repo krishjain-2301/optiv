@@ -31,6 +31,10 @@ def _extract(path: Path, settings: Settings) -> Document:
         from .pptx import extract_pptx
 
         return extract_pptx(path, settings)
+    if ftype == "xlsx":
+        from .xlsx import extract_xlsx
+
+        return extract_xlsx(path, settings)
     if ftype == "image":
         from .image import extract_image
 

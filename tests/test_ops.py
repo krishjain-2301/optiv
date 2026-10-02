@@ -71,3 +71,34 @@ def test_workspace_empty_and_sweep(tmp_path, monkeypatch):
     assert not old.exists() and current.exists()
     workspace.empty(current)
     assert current.exists() and not list(current.iterdir())
+
+
+def test_org_config_from_yaml(tmp_path):
+    from pii_shield.config import load_org_config
+
+    p = tmp_path / "org.yaml"
+    p.write_text("allow_list: [Contoso]\nid_patterns:\n  - {name: badge, entity: EMPLOYEE_ID, pattern: 'BDG-[0-9]{5}', score: 0.9}\n",
+                 encoding="utf-8")
+    cfg = load_org_config(p)
+    assert cfg["allow_list"] == ["Contoso"] and cfg["deny_list"] == [] and cfg["id_patterns"][0]["name"] == "badge"
+    p.write_text("id_patterns:\n  - {name: broken, pattern: 'x'}\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_org_config(p)
+
+
+def test_bundled_org_rules_loaded():
+    from pii_shield.detect.rules import RULES
+
+    assert {"cadence_person_id", "cadence_vendor_id"} <= {r.name for r in RULES}
+
+
+def test_missing_ocr_model_is_an_error(monkeypatch, tmp_path):
+    from pii_shield.extract import ocr
+
+    monkeypatch.setenv("PII_SHIELD_REC_MODEL", str(tmp_path / "missing.onnx"))
+    ocr.get_engine.cache_clear()
+    try:
+        with pytest.raises(ModelMissing):
+            ocr.get_engine("rapidocr")
+    finally:
+        ocr.get_engine.cache_clear()

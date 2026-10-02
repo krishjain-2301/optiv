@@ -78,8 +78,8 @@ with st.sidebar:
 # ------------------------------------------------------------------------------------ input
 st.header("1 · Upload artifacts")
 c1, c2 = st.columns([3, 1])
-uploads = c1.file_uploader("PDF, DOCX, PPTX or images", accept_multiple_files=True,
-                           type=["pdf", "docx", "pptx", "png", "jpg", "jpeg", "tif", "tiff", "bmp"])
+uploads = c1.file_uploader("PDF, DOCX, PPTX, XLSX or images", accept_multiple_files=True,
+                           type=["pdf", "docx", "pptx", "xlsx", "png", "jpg", "jpeg", "tif", "tiff", "bmp"])
 use_synth = c2.button("Use synthetic samples", help="Generated test artifacts with planted PII and gold labels")
 go = c2.button("Run pipeline", type="primary", disabled=not uploads)
 
