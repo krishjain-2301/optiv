@@ -8,6 +8,8 @@ from datetime import date
 
 import phonenumbers
 
+from ..config import PHONE_REGIONS
+
 Result = tuple[float, str]
 
 
@@ -33,6 +35,10 @@ def check_card(value: str) -> Result:
         return 0.35, "Luhn checksum valid and known card prefix"
     if ok:
         return 0.2, "Luhn checksum valid"
+    if len(d) in (15, 16):
+        # A card-length number that fails Luhn is still some account or card identifier (or a
+        # mistyped card): kept in the review band, redacted, never silently passed on.
+        return 0.05, "Luhn checksum fails, but card-length number (review)"
     return -0.3, "Luhn checksum fails"
 
 
@@ -102,18 +108,43 @@ def check_phone(value: str) -> Result:
         return -0.4, "digit count outside phone range"
     if len(set(d)) <= 2:
         return -0.3, "too few distinct digits"
-    region = None if value.strip().startswith("+") else "US"
-    try:
-        num = phonenumbers.parse(value, region)
+    v = value.strip()
+    if DATE_SHAPE.fullmatch(v) or IP_SHAPE.fullmatch(v):
+        return -0.4, "date- or IP-shaped, not a phone number"
+    possible = False
+    for region, bonus in _phone_regions(v, d):
+        try:
+            num = phonenumbers.parse(v, region)
+        except phonenumbers.NumberParseException:
+            continue
         if phonenumbers.is_valid_number(num):
-            return 0.25, f"valid {phonenumbers.region_code_for_number(num) or ''} number (libphonenumber)"
-        if phonenumbers.is_possible_number(num):
-            return 0.1, "possible number (libphonenumber)"
-    except phonenumbers.NumberParseException:
-        pass
+            return bonus, f"valid {phonenumbers.region_code_for_number(num) or region} number (libphonenumber)"
+        possible = possible or phonenumbers.is_possible_number(num)
+    if possible:
+        return 0.1, "possible number (libphonenumber)"
     if "555" in d:
         return 0.0, "fictional 555 exchange (kept when labelled)"
     return -0.1, "not a recognised national format"
+
+
+DATE_SHAPE = re.compile(r"\d{1,4}[./-]\d{1,2}[./-]\d{2,4}")
+IP_SHAPE = re.compile(r"\d{1,3}(?:\.\d{1,3}){3}")
+
+
+def _phone_regions(value: str, d: str) -> list[tuple[str | None, float]]:
+    """Which regions a number written without "+" can belong to, judged by its shape, so a
+    landline from London, Warsaw or Mumbai is recognised without assuming the US. Each region
+    carries the score a valid parse earns: national formats that are only a digit count (PL, 9
+    digits, no trunk prefix) are weaker evidence and land in the review band."""
+    if value.startswith("+"):
+        return [(None, 0.25)]
+    if d.startswith("0"):
+        return [(r, 0.25) for r in PHONE_REGIONS["trunk_prefix"]]
+    if len(d) == 10:
+        return [(r, 0.25) for r in PHONE_REGIONS["ten_digit"]]
+    if len(d) == 9:
+        return [(r, 0.15) for r in PHONE_REGIONS["nine_digit"]]
+    return [(r, 0.25) for r in PHONE_REGIONS["ten_digit"][:1]]
 
 
 def check_date(value: str) -> Result:
@@ -140,3 +171,65 @@ def check_mailbox(value: str) -> Result:
     if ROLE_MAILBOX.search(local):
         return -0.45, "role/shared mailbox, not a personal address (review)"
     return 0.0, ""
+
+
+# Verhoeff tables (Aadhaar check digit)
+_VD = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 2, 3, 4, 0, 6, 7, 8, 9, 5], [2, 3, 4, 0, 1, 7, 8, 9, 5, 6],
+       [3, 4, 0, 1, 2, 8, 9, 5, 6, 7], [4, 0, 1, 2, 3, 9, 5, 6, 7, 8], [5, 9, 8, 7, 6, 0, 4, 3, 2, 1],
+       [6, 5, 9, 8, 7, 1, 0, 4, 3, 2], [7, 6, 5, 9, 8, 2, 1, 0, 4, 3], [8, 7, 6, 5, 9, 3, 2, 1, 0, 4],
+       [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]]
+_VP = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9], [1, 5, 7, 6, 2, 8, 3, 0, 9, 4], [5, 8, 0, 3, 7, 9, 6, 1, 4, 2],
+       [8, 9, 1, 6, 0, 4, 3, 5, 2, 7], [9, 4, 5, 3, 1, 2, 6, 8, 7, 0], [4, 2, 8, 6, 5, 7, 3, 9, 0, 1],
+       [2, 7, 9, 3, 8, 0, 6, 4, 1, 5], [7, 0, 4, 6, 9, 1, 3, 2, 5, 8]]
+
+
+def verhoeff_ok(number: str) -> bool:
+    c = 0
+    for i, ch in enumerate(reversed(digits(number))):
+        c = _VD[c][_VP[i % 8][int(ch)]]
+    return c == 0
+
+
+def check_aadhaar(value: str) -> Result:
+    d = digits(value)
+    if len(d) != 12:
+        return -0.5, "not 12 digits"
+    if d[0] in "01":
+        return -0.25, "starts with 0/1, never issued (kept when labelled)"
+    if len(set(d)) <= 2:
+        return -0.4, "too few distinct digits"
+    if verhoeff_ok(d):
+        return 0.3, "Aadhaar Verhoeff check digit valid"
+    return -0.15, "Verhoeff check digit fails (kept when labelled)"
+
+
+_GST_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+
+def check_gstin(value: str) -> Result:
+    v = value.upper()
+    if not re.fullmatch(r"\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]", v):
+        return -0.5, "not GSTIN shape"
+    if not 1 <= int(v[:2]) <= 38 and v[:2] not in ("97", "99"):
+        return -0.2, f"state code {v[:2]} unknown"
+    total = 0
+    for i, ch in enumerate(v[:14]):
+        x = _GST_CHARS.index(ch) * (2 if i % 2 else 1)
+        total += x // 36 + x % 36
+    if _GST_CHARS[(36 - total % 36) % 36] == v[14]:
+        return 0.3, "GSTIN check character valid (embeds a PAN)"
+    return 0.0, "GSTIN shape with embedded PAN; check character fails"
+
+
+def check_ip(value: str) -> Result:
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(value)
+    except ValueError:
+        return -0.6, "not a valid IP address"
+    if ip.is_loopback or ip.is_unspecified or ip.is_multicast:
+        return -0.3, "loopback / unspecified / multicast address"
+    if ip.version == 4 and value.count(".") == 3 and all(len(p) == 1 for p in value.split(".")):
+        return -0.15, "short dotted number (could be a version string)"
+    return (0.0, "private-range address") if ip.is_private else (0.1, "public IP address")

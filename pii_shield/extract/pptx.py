@@ -10,7 +10,7 @@ from ..config import Settings
 from ..models import Document
 from .common import IdGen
 from .docx import count_structure, ocr_part, unit_to_span
-from .ooxml import author_attribute_units, iter_pictures, package_xml_units, pptx_units
+from .ooxml import iter_pictures, package_units, pptx_units
 
 
 def extract_pptx(path: str | Path, settings: Settings) -> Document:
@@ -22,7 +22,7 @@ def extract_pptx(path: str | Path, settings: Settings) -> Document:
     for i in range(1, doc.pages + 1):
         doc.page_sizes[i] = (prs.slide_width, prs.slide_height)
 
-    units = list(pptx_units(prs)) + list(package_xml_units(prs.part.package)) + list(author_attribute_units(prs.part.package))
+    units = list(pptx_units(prs)) + list(package_units(prs.part.package))
     doc.spans.extend(unit_to_span(u, ids(), doc.file) for u in units)
     counts = count_structure(units)
     counts["slides"] = doc.pages

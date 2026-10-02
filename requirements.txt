@@ -19,6 +19,7 @@ streamlit>=1.35
 
 # Tests
 pytest>=8.0
+faker==37.4.0                 # held-out test set (scripts/make_heldout.py); tests only
 
 # spaCy model (install once):  python -m spacy download en_core_web_lg   (or en_core_web_sm)
 # Optional extras:

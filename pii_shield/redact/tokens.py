@@ -22,17 +22,18 @@ SHORT = {
     "PERSON": "PERSON", "EMAIL_ADDRESS": "EMAIL", "PHONE_NUMBER": "PHONE", "EMPLOYEE_ID": "EMP_ID",
     "VENDOR_ID": "VENDOR_ID", "US_SSN": "SSN", "PASSPORT": "PASSPORT", "IN_PAN": "PAN", "PL_PESEL": "PESEL",
     "TAX_ID": "TIN", "NATIONAL_ID": "NATIONAL_ID", "CREDIT_CARD": "CARD", "IBAN_CODE": "IBAN",
-    "DATE_OF_BIRTH": "DOB", "ADDRESS": "ADDRESS", "LOW_CONFIDENCE_OCR": "UNREADABLE",
+    "DATE_OF_BIRTH": "DOB", "ADDRESS": "ADDRESS", "LOW_CONFIDENCE_OCR": "UNREADABLE", "IN_AADHAAR": "AADHAAR",
+    "IP_ADDRESS": "IP", "CREDENTIAL": "SECRET",
 }
 LINKABLE = {"EMAIL_ADDRESS", "PHONE_NUMBER", "EMPLOYEE_ID", "US_SSN", "PASSPORT", "IN_PAN", "PL_PESEL", "TAX_ID",
-            "DATE_OF_BIRTH", "ADDRESS", "NATIONAL_ID"}
+            "DATE_OF_BIRTH", "ADDRESS", "NATIONAL_ID", "IN_AADHAAR"}
 
 
 def normalise(entity: str, value: str) -> str:
     v = value.strip()
     if entity == "EMAIL_ADDRESS":
         return re.sub(r"\s", "", v.lower())
-    if entity in ("PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "TAX_ID"):
+    if entity in ("PHONE_NUMBER", "CREDIT_CARD", "US_SSN", "IN_AADHAAR") or (entity == "TAX_ID" and not re.search(r"[A-Za-z]", v)):
         return re.sub(r"\D", "", v)
     if entity == "PERSON":
         return " ".join(name_tokens(v)).lower()

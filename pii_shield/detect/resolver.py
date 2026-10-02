@@ -6,13 +6,14 @@ from dataclasses import replace
 
 from ..config import Settings
 from ..models import Document, Finding, Span
-from .names import looks_like_name, trim_to_name
+from .names import (ANY_CASE, INITIAL, TITLE, UPPER, is_given_name, looks_like_name, name_tokens, ocr_denoise,
+                    strip_possessive, surname_like, token_case, trim_to_name)
 
 # When two different categories claim overlapping text, the more specific one wins.
 PRIORITY = {
     "EMAIL_ADDRESS": 9, "US_SSN": 9, "IN_PAN": 9, "PL_PESEL": 9, "PASSPORT": 9, "CREDIT_CARD": 9, "IBAN_CODE": 9,
     "EMPLOYEE_ID": 9, "VENDOR_ID": 8, "TAX_ID": 8, "NATIONAL_ID": 8, "DATE_OF_BIRTH": 7, "PHONE_NUMBER": 6,
-    "ADDRESS": 5, "PERSON": 4, "LOW_CONFIDENCE_OCR": 1,
+    "ADDRESS": 5, "PERSON": 4, "LOW_CONFIDENCE_OCR": 1, "IN_AADHAAR": 9, "IP_ADDRESS": 8, "CREDENTIAL": 10,
 }
 LABEL_BEFORE = re.compile(r"[A-Za-z][A-Za-z .#/()'-]{1,40}[:：]\s*$")
 
@@ -31,7 +32,9 @@ def clean_person(f: Finding, span: Span, allow: set[str]) -> Finding | None:
         lead = len(raw) - len(raw.lstrip())
         f.end = f.start + lead + len(first)
         raw = span.text[f.start:f.end]
-    trimmed = trim_to_name(raw, allow)
+    # Gazetteer hits carry their own evidence (a listed given name), so any letter case is accepted.
+    cases = ANY_CASE if f.recognizer == "rule:given_name" else (TITLE, UPPER)
+    trimmed = trim_to_name(raw, allow, cases)
     if trimmed is None:
         f.decision, f.reasons = "drop", f.reasons + ["not name-shaped after trimming (business term, acronym or field name)"]
         return f
@@ -52,6 +55,32 @@ def clean_person(f: Finding, span: Span, allow: set[str]) -> Finding | None:
 
 
 SINGLE_TOKEN_NER_CAP = 0.5
+NEXT_WORD = re.compile(r"[  ]([^\s,;:()\[\]\"]+)")
+PREV_WORD = re.compile(r"([^\s,;:()\[\]\"]+)[  ]$")
+
+
+def extend_person(f: Finding, span: Span, allow: set[str]) -> Finding:
+    """A name hit that stops short of the surname leaves it readable: "[PERSON_001] BALAWENDER",
+    "[PERSON_015] C1ark". Extend over one adjacent word written in the same case (OCR digit
+    confusions tolerated) on the right; on the left only over a listed given name."""
+    if f.entity_type != "PERSON" or f.decision == "drop":
+        return f
+    toks = name_tokens(span.text[f.start:f.end])
+    shapes = {token_case(t) for t in toks} - {INITIAL, None}
+    if not toks or len(toks) > 2 or len(shapes) != 1 or (shape := shapes.pop()) not in (TITLE, UPPER):
+        return f
+    m = NEXT_WORD.match(span.text, f.end)
+    if m and surname_like(m.group(1), shape, allow):
+        word = m.group(1).rstrip(".,;:!?")
+        word = word[:len(word) - (len(word) - len(strip_possessive(word)))]
+        f.end = m.start(1) + len(word)
+        f.reasons.append(f"extended over adjacent surname-shaped word '{word}'")
+    m = PREV_WORD.search(span.text, 0, f.start)
+    if m and surname_like(m.group(1), shape, allow) and is_given_name(ocr_denoise(m.group(1))):
+        f.start = m.start(1)
+        f.reasons.append(f"extended over adjacent given name '{m.group(1)}'")
+    f.text = span.text[f.start:f.end]
+    return f
 
 
 def merge(findings: list[Finding]) -> list[Finding]:
@@ -145,7 +174,7 @@ def finalise(doc_findings: dict[str, list[Finding]], docs: dict[str, Document], 
             span = doc.span(f.span_id)
             f = clean_person(f, span, allow)
             if f is not None:
-                cleaned.append(f)
+                cleaned.append(extend_person(f, span, allow))
         live = [f for f in cleaned if f.decision != "drop"]
         dropped = [f for f in cleaned if f.decision == "drop"]
         merged = merge(live)
