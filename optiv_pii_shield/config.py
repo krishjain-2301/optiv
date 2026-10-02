@@ -85,7 +85,7 @@ NOT_A_NAME_WORDS = {
     n/a tbd na none other misc general overview summary introduction purpose scope objective objectives
     responsibilities responsible accountable consulted informed raci signature signed attestation
     training personnel office theme record records identity contacts narrative case module appendix
-    onboarding offboarding member members administration approver reviewers
+    onboarding offboarding member members administration approver reviewers internal external
     """.split()
 }
 

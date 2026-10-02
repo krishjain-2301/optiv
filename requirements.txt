@@ -21,11 +21,14 @@ rapidfuzz==3.14.6
 PyYAML==6.0.3                 # optiv_pii_shield/data/org.yaml
 cryptography==45.0.7          # token vault encryption (AES-256-GCM)
 
-# Demo UI
-streamlit==1.64.0
+# Dashboard server (server/). The dashboard itself is built from web/ with Node: see README.
+fastapi==0.142.2
+uvicorn==0.54.0
+python-multipart==0.0.32      # file uploads
 
 # Tests
 pytest==9.1.1
+httpx==0.28.1                 # FastAPI's test client (tests/test_server.py)
 faker==37.4.0                 # held-out test set (scripts/make_heldout.py)
 
 # Optional extras (not pinned, not measured):

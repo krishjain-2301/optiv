@@ -20,25 +20,30 @@ from .ocr import get_engine
 MIN_TEXT_CHARS = 25  # below this a page is treated as having no usable text layer
 
 
-def extract_pdf(path: str | Path, settings: Settings) -> Document:
+def extract_pdf(path: str | Path, settings: Settings, on_page=None) -> Document:
+    """``on_page(done, total)`` is called after each page (OCR of a long scan takes minutes)."""
     path = Path(path)
     doc = Document(file=path.name, path=str(path), file_type="pdf")
     ids = IdGen(path.stem[:12])
     pdf = fitz.open(path)
-    doc.pages = pdf.page_count
-    counts = {"pages": pdf.page_count, "headings": 0, "paragraphs": 0, "tables": 0, "rows": 0, "cells": 0, "images": 0}
-
-    _metadata_spans(pdf, doc, ids)
-
-    for pno in range(pdf.page_count):
-        page = pdf[pno]
-        doc.page_sizes[pno + 1] = (page.rect.width, page.rect.height)
-        native = page.get_text("text").strip()
-        if len(native) >= MIN_TEXT_CHARS:
-            _native_page(page, pno + 1, doc, ids, settings, counts)
-        else:
-            doc.ocr_pages.append(pno + 1)
-            _scanned_page(page, pno + 1, doc, ids, settings, counts)
+    try:
+        doc.pages = pdf.page_count
+        counts = {"pages": pdf.page_count, "headings": 0, "paragraphs": 0, "tables": 0, "rows": 0, "cells": 0,
+                  "images": 0}
+        _metadata_spans(pdf, doc, ids)
+        for pno in range(pdf.page_count):
+            page = pdf[pno]
+            doc.page_sizes[pno + 1] = (page.rect.width, page.rect.height)
+            native = page.get_text("text").strip()
+            if len(native) >= MIN_TEXT_CHARS:
+                _native_page(page, pno + 1, doc, ids, settings, counts)
+            else:
+                doc.ocr_pages.append(pno + 1)
+                _scanned_page(page, pno + 1, doc, ids, settings, counts)
+            if on_page is not None:
+                on_page(pno + 1, pdf.page_count)
+    finally:
+        pdf.close()  # Windows keeps the file locked while open: a cancelled run's upload must be deletable
     doc.structure = counts
     if doc.ocr_pages:
         doc.warnings.append(f"{len(doc.ocr_pages)} of {doc.pages} pages have no text layer and were OCR'd")

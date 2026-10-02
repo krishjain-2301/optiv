@@ -13,3 +13,7 @@ samples/synthetic/
 Cadence_*.pdf
 Cadence_*.docx
 Cadence_*.pptx
+
+# Dashboard build (web/): dependencies and build output
+web/node_modules/
+web/dist/

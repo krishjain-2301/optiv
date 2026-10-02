@@ -54,19 +54,40 @@ and the angle classifier **off** (it flipped long lines on upright scans, silent
 Masks use the recogniser's per-character positions and are padded, so they err towards covering a
 neighbouring character rather than exposing one.
 Tesseract is supported with `--ocr tesseract` if `pytesseract` and the binary are installed.
-GLiNER-PII is optional: `pip install gliner`, then `--gliner` (downloads the model once, runs locally).
+GLiNER-PII is optional: `pip install gliner`, `python scripts/fetch_models.py --gliner` (caches the weights once,
+about 1.8 GB), then `--gliner` or the dashboard toggle. Runs load the weights from the cache only. GLiNER hits
+must look like a value of their category before they count: it also tags labels ("E-mail" in a table header).
 
 ## Use
 
-**Demo UI**
+**Dashboard**
 
 ```powershell
-streamlit run app.py
+cd web; npm install; npm run build; cd ..   # once, and after changing web/ (needs Node 20+)
+python app.py                               # http://127.0.0.1:8000, opens the browser
 ```
 
-Upload files (or press *Use synthetic samples*). The tabs show the overview, extraction side by side with the page
-(PII boxed), every finding in context with its reasons, the exact text the LLM would receive, measured metrics
-(when gold labels are supplied) and downloads.
+A FastAPI server (`server/`) on 127.0.0.1 runs the pipeline and hosts a React dashboard (`web/`). Everything the
+page needs is bundled by the build: no CDN, no web fonts, nothing fetched at run time. A scan runs in a background
+thread on the server; the page shows its stage, page-by-page progress and elapsed time, and can pause or cancel
+it (a cancelled scan's files are deleted). The run is sent to the browser once, so pages, steps and filters
+respond without another request. Uploads, extracted text and reports are deleted when the server stops.
+
+The sidebar lists the modes by category, and each mode lays its own steps out left to right.
+
+| Category | Mode | Steps |
+|---|---|---|
+| Workspace | New scan | Sources → Detection policy → Run (uploads, or synthetic samples) |
+| Analytics | Overview | Summary → Files → Pipeline |
+| | Exposure & risk | Ranking → Page heatmap → Residual risk |
+| | Findings | Breakdown → Register → In context → Dropped candidates (one filter row scopes all four) |
+| Documents | Extraction | Preview (PDF page with PII boxed) → Structure → Span map → Images |
+| | Redaction | LLM text → Token map → Leak gate |
+| Assurance | Evaluation | Gold labels → Scores → Errors → Structure retention |
+| | Reports | Shareable → Sensitive → Session |
+
+While developing the dashboard, `python app.py --no-browser` plus `npm run dev` in `web/` gives hot reload on
+http://localhost:5173 (it forwards `/api` to the Python server). Charts are plain HTML/SVG (`web/src/components/charts.tsx`).
 
 **CLI**
 
@@ -107,7 +128,7 @@ explicit allow-list of the shareable files below and never includes them.
 
 ## Exposure score
 
-`summary.json` (and the Overview tab) gives each file an exposure profile (`optiv_pii_shield/exposure.py`, weights in
+`summary.json` (and the dashboard’s Exposure & risk page) gives each file an exposure profile (`optiv_pii_shield/exposure.py`, weights in
 `config.py`):
 
 - **score**: sum of sensitivity weights (1-10) over every PII instance found: credentials and government or
@@ -202,7 +223,10 @@ rule was widened (labelled → review band). Treat the Aadhaar line as no longer
 **Known limits.** Names leak when no layer has evidence: lowercase names whose given name is not in
 `optiv_pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
 that no keyword, header or confirmed mention supports, and names garbled by OCR beyond one or two digit
-confusions. Turning on GLiNER (`--gliner`) is the intended mitigation; it has not been measured here.
+confusions. GLiNER (`--gliner`, `knowledgator/gliner-pii-base-v1.0`, gliner 0.2.29) was measured once on the test
+seed on 2026-10-03: person names 93/115 instead of 90/115 (lowercase unchanged), structured identifiers still
+104/104, but 8 tokens in the 20 decoy paragraphs instead of 0, and detection about 10x slower on CPU. It is a
+small recall gain bought with false positives, so it stays off by default.
 
 ## Layout
 
@@ -220,7 +244,18 @@ optiv_pii_shield/
   report.py            exposure register, summary, audit log
   evaluate.py          gold labels, recall/precision/leaks, structure retention
   pipeline.py, cli.py
-app.py                 Streamlit demo
+app.py                 starts the dashboard server and opens the browser
+server/
+  api.py               FastAPI routes (/api/scan, /api/run, ...) and hosting of web/dist
+  session.py           the one local session: working folder, background scan (progress, pause, cancel), result
+  payloads.py          the JSON the dashboard is sent: the run, one document's detail, the evaluation
+web/                   React + TypeScript dashboard (Vite)
+  src/api.ts           types of the server's JSON and the calls that fetch it
+  src/store.tsx        app state: current run, scan in progress, scan settings, queued files
+  src/components/      header, step bar, stat tiles, cards, charts, table, form controls
+  src/pages/           one file per mode: Scan, Overview, Exposure, Findings, Extraction, Redaction,
+                       Evaluation, Reports
+  src/lib/entities.ts  entity labels, category groups and chart colours
 scripts/make_samples.py
 tests/
 ```

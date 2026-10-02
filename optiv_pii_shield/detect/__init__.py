@@ -123,12 +123,15 @@ class Detector:
             out.append(r)
         return out
 
-    def detect_document(self, doc: Document) -> list[Finding]:
+    def detect_document(self, doc: Document, on_span=None) -> list[Finding]:
+        """``on_span(done)`` is called every 20 text elements (GLiNER takes a while per element)."""
         findings: list[Finding] = []
         prev: Span | None = None
-        for span in doc.spans:
+        for i, span in enumerate(doc.spans, 1):
             findings.extend(self.detect_span(span, self._prefix(span, prev)))
             prev = span
+            if on_span is not None and (i % 20 == 0 or i == len(doc.spans)):
+                on_span(i)
         return findings
 
     def _prefix(self, span: Span, prev: Span | None) -> str:
@@ -143,9 +146,15 @@ class Detector:
         return ""
 
     # ----------------------------------------------------------------------- whole corpus
-    def detect_all(self, docs: dict[str, Document]) -> dict[str, list[Finding]]:
+    def detect_all(self, docs: dict[str, Document], on_progress=None) -> dict[str, list[Finding]]:
+        """``on_progress(file, done, total)`` counts text elements over all files."""
         s = self.settings
-        first = {f: self.detect_document(d) for f, d in docs.items()}
+        total = sum(len(d.spans) for d in docs.values())
+        first, base = {}, 0
+        for f, d in docs.items():
+            report = (lambda n, f=f, base=base: on_progress(f, base + n, total)) if on_progress else None
+            first[f] = self.detect_document(d, report)
+            base += len(d.spans)
         resolved = finalise(first, docs, s)
         if s.propagate_persons:
             idx = build_index(resolved, s.extra_deny_list)

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 import spacy
@@ -50,6 +51,31 @@ GLINER_LABELS = {
 }
 
 
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def gliner_extent(etype: str, text: str, start: int, end: int) -> tuple[int, int] | None:
+    """Where a GLiNER hit really is, or None when it cannot be a value of its category.
+
+    The model also tags the label beside a value as the value ("E-mail", "Email" in a table header)
+    and cuts e-mails short ("tprm-office@cadence-demo" without ".example"). A label word redacted as
+    PII becomes a vault value, and the leak gate then refuses every file that still shows the word.
+    So: an e-mail hit is moved onto the whole address it overlaps, identifiers and dates need digits,
+    an address needs a number or a comma. Names are checked for shape by the resolver.
+    """
+    value = text[start:end]
+    if etype == "PERSON":
+        return start, end
+    if etype == "EMAIL_ADDRESS":
+        for m in EMAIL.finditer(text):
+            if m.start() < end and m.end() > start:
+                return m.start(), m.end()
+        return None
+    if etype == "ADDRESS":
+        return (start, end) if re.search(r"[\d,]", value) else None
+    return (start, end) if sum(c.isdigit() for c in value) >= 4 else None
+
+
 class GlinerRecognizer(EntityRecognizer):
     """Zero-shot PII NER (knowledgator/gliner-pii-*). Scores are the model's own probabilities."""
 
@@ -63,7 +89,8 @@ class GlinerRecognizer(EntityRecognizer):
     def load(self) -> None:
         from gliner import GLiNER  # optional dependency
 
-        self.model = GLiNER.from_pretrained(self.model_name)
+        # Cached weights only: a run never contacts the model hub (scripts/fetch_models.py --gliner).
+        self.model = GLiNER.from_pretrained(self.model_name, local_files_only=True)
 
     def analyze(self, text, entities, nlp_artifacts=None) -> list[RecognizerResult]:
         if not text.strip() or self.model is None:
@@ -73,9 +100,12 @@ class GlinerRecognizer(EntityRecognizer):
             etype = GLINER_LABELS[ent["label"]]
             if entities and etype not in entities:
                 continue
+            extent = gliner_extent(etype, text, ent["start"], ent["end"])
+            if extent is None:
+                continue
             reason = f"GLiNER label '{ent['label']}' p={ent['score']:.2f}"
             out.append(RecognizerResult(
-                etype, ent["start"], ent["end"], float(ent["score"]),
+                etype, extent[0], extent[1], float(ent["score"]),
                 analysis_explanation=AnalysisExplanation("GLiNER", float(ent["score"]), textual_explanation=reason),
                 recognition_metadata={RecognizerResult.RECOGNIZER_NAME_KEY: "ner:gliner",
                                       RecognizerResult.IS_SCORE_ENHANCED_BY_CONTEXT_KEY: True,
