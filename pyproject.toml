@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Not "pii-shield": that name is taken on PyPI by an unrelated package that also imports as
+# pii_shield, so installing either would shadow the other.
+name = "optiv-pii-shield"
+version = "0.2.0"
+description = "Offline, fail-closed PII detection and redaction for PDF, DOCX, PPTX, XLSX and images"
+requires-python = ">=3.11"
+
+[project.scripts]
+optiv-pii-shield = "optiv_pii_shield.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["optiv_pii_shield*"]
+
+[tool.setuptools.package-data]
+optiv_pii_shield = ["data/*.txt", "data/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

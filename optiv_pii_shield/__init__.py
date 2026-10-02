@@ -1,6 +1,6 @@
 """PII Shield: offline, fail-closed PII detection and redaction for PDF, DOCX, PPTX and images.
 
-    from pii_shield import run, Settings
+    from optiv_pii_shield import run, Settings
     result = run(["policy.pdf", "training.docx"], Settings(), out_dir="out")
 """
 from .config import Settings

@@ -1,6 +1,7 @@
 # PII Shield
 
-Offline, fail-closed PII detection and redaction for text artifacts (PDF, including scanned; DOCX; PPTX; images).
+Offline, fail-closed PII detection and redaction for text artifacts (PDF, including scanned; DOCX; PPTX; XLSX;
+images).
 Built for the Optiv VIT case study (Case Study 2). The design rationale is in
 [`01-landscape-and-recommendation.md`](01-landscape-and-recommendation.md) (Option C).
 
@@ -11,7 +12,9 @@ that is safe to hand to an LLM, plus masked copies of the originals and a full a
 Upload ─► sniff type (magic bytes)
        ─► EXTRACT  PDF text layer | layout-aware OCR (ruled tables cell-by-cell, screenshots re-read at 2x)
                    DOCX/PPTX OOXML walk: body, tables, text boxes, groups, headers/footers, notes, comments,
-                   document properties, customXml, comment/tracked-change authors, embedded images (OCR)
+                   document properties, customXml, comment/tracked-change authors, embedded images (OCR),
+                   alt text, charts, SmartArt, link targets, field codes
+                   XLSX: every sheet (hidden too), cells under column headers, formulas, comments, properties
                    → span map: file · page/slide · element · table cell + column header · bbox · OCR confidence
        ─► DETECT   L1 rules + checksums + context words   (inside Presidio)
                    L2 NER: spaCy, optional GLiNER-PII      (inside Presidio)
@@ -20,8 +23,9 @@ Upload ─► sniff type (magic bytes)
                    L0 fail-closed: identifier-like OCR words below the confidence floor
                    Resolver: trim/allow-list, merge overlaps, agreement bonus, route redact / review / drop
        ─► REDACT   stable tokens [PERSON_007] [EMAIL_007] across files · redacted Markdown for the LLM
-                   masked PDF/DOCX/PPTX (layout and page count kept, author metadata cleared)
-       ─► REPORT   exposure register (CSV/XLSX) · summary.json · audit_log.jsonl · token vault
+                   masked PDF/DOCX/PPTX/XLSX (layout and page count kept, author metadata cleared)
+                   LEAK GATE: no vault value may survive in any output, or the file is not written
+       ─► REPORT   exposure register (CSV/XLSX) · exposure score + residual risk · audit log · encrypted vault
        ─► MEASURE  recall / precision / leaks vs gold labels, per category and per source type
 ```
 
@@ -30,10 +34,18 @@ Upload ─► sniff type (magic bytes)
 ```powershell
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python -m spacy download en_core_web_lg     # or en_core_web_sm (smaller, weaker on names)
+pip install -r requirements.txt             # exact pins, includes the en_core_web_lg model wheel
 python scripts/fetch_models.py              # English OCR model, ~9 MB, one-time (weights only)
 ```
+
+Missing models are errors, not fallbacks: if the configured spaCy model (`--spacy-model`, default
+`en_core_web_lg`), the English OCR model or (when asked for) GLiNER is not installed, the run stops before any
+file is read. Rules-only runs must be asked for explicitly (`Settings(use_spacy=False)`).
+
+Organisation-specific vocabulary (allow-list of product/team names, always-redact names, internal ID formats
+such as `EMP-40718` / `MER-IN-0042`) lives in `optiv_pii_shield/data/org.yaml`; point `PII_SHIELD_ORG_CONFIG` at
+another file for another client. CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned
+dependencies.
 
 OCR uses RapidOCR (PP-OCR models on ONNX Runtime), which installs with pip and needs no system binary.
 Two settings matter and were chosen from measurements on the scans: the **English** recognition model
@@ -59,15 +71,15 @@ Upload files (or press *Use synthetic samples*). The tabs show the overview, ext
 **CLI**
 
 ```powershell
-python -m pii_shield run path\to\*.pdf path\to\*.docx --out out
-python -m pii_shield run samples\synthetic\* --out out --gold samples\synthetic\gold_labels.csv
-python -m pii_shield gold-template path\to\files\* --out gold_draft.csv   # bootstrap gold labels, then correct by hand
+python -m optiv_pii_shield run path\to\*.pdf path\to\*.docx --out out
+python -m optiv_pii_shield run samples\synthetic\* --out out --gold samples\synthetic\gold_labels.csv
+python -m optiv_pii_shield gold-template path\to\files\* --out gold_draft.csv   # bootstrap gold labels, then correct by hand
 ```
 
 **Python**
 
 ```python
-from pii_shield import run, Settings
+from optiv_pii_shield import run, Settings
 res = run(["policy.pdf"], Settings(), out_dir="out")
 res.redacted["policy.pdf"]        # LLM-safe Markdown
 res.findings["policy.pdf"]        # findings with location, category, token, score, layer, reasons
@@ -90,8 +102,24 @@ explicit allow-list of the shareable files below and never includes them.
 | `pii_exposure_register.SENSITIVE.csv` | The same with full original values | **yes** |
 | `summary.json` | Per-file counts: OCR pages, images and their status, categories, image-only identifiers, warnings | no |
 | `audit_log.jsonl` | Every decision including dropped candidates, values partially masked | no |
-| `token_vault.SENSITIVE.json` | Token → original value, for authorised re-identification | **yes** |
+| `token_vault.SENSITIVE.enc.json` | Token → original value, AES-256-GCM encrypted; written only when `PII_SHIELD_VAULT_KEY` (CLI) or the UI passphrase is set. Open with `python -m optiv_pii_shield vault-open` | **yes** |
 | `evaluation.json` | With `--gold`: recall, precision, leaks, per-category/source breakdown, structure retention | no |
+
+## Exposure score
+
+`summary.json` (and the Overview tab) gives each file an exposure profile (`optiv_pii_shield/exposure.py`, weights in
+`config.py`):
+
+- **score**: sum of sensitivity weights (1-10) over every PII instance found: credentials and government or
+  financial IDs 8-10, date of birth 6, address 5, phone/e-mail 4, name 3, vendor ID 1.
+- **per_1k_words**, so long and short files compare; **by_page** for the page/slide heatmap.
+- **rating**: `critical` if any weight ≥ 9 instance is present, else `high` / `medium` / `low` by density.
+- **residual** after redaction, in three parts kept apart because they are known to different degrees:
+  `known` (values left in outputs: 0 by construction, plus what the leak gate had to catch, and whether the
+  masked copy was written or withheld), `unreadable` (images withheld, OCR words masked), and
+  `estimated_missed` (found × miss rate from the held-out set; an estimate, with its basis recorded).
+
+`exposure_ranking` lists files by density, so the riskiest artifacts are reviewed first.
 
 ## Fail-closed behaviour
 
@@ -172,19 +200,22 @@ The test seed was inspected once, before one fix: a labelled Aadhaar starting wi
 rule was widened (labelled → review band). Treat the Aadhaar line as no longer held out.
 
 **Known limits.** Names leak when no layer has evidence: lowercase names whose given name is not in
-`pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
+`optiv_pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
 that no keyword, header or confirmed mention supports, and names garbled by OCR beyond one or two digit
 confusions. Turning on GLiNER (`--gliner`) is the intended mitigation; it has not been measured here.
 
 ## Layout
 
 ```
-pii_shield/
-  config.py            thresholds, allow-list, header→category map, context words
+optiv_pii_shield/
+  config.py            thresholds, header→category map, context words, sensitivity weights
+  data/                org.yaml (allow-list, deny-list, ID formats), given_names.txt (gazetteer)
   models.py            Span / Word / ImageRef / Document / Finding
   extract/             sniff, pdf, docx, pptx, image, ooxml walkers, layout (tables/regions), ocr backends
   detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver
-  redact/              tokens (vault), text (LLM output), files (masked PDF/DOCX/PPTX/images)
+  redact/              tokens (vault), text (LLM output), files (masked PDF/DOCX/PPTX/XLSX/images), leakcheck
+  exposure.py          exposure score and residual risk
+  workspace.py         per-session working folders and their removal
   render.py            spans → Markdown (shared by extracted and redacted views)
   report.py            exposure register, summary, audit log
   evaluate.py          gold labels, recall/precision/leaks, structure retention

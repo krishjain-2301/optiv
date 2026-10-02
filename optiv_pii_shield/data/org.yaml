@@ -1,0 +1,114 @@
+# Organisation-specific vocabulary: the only part of the configuration that changes per client.
+# Point PII_SHIELD_ORG_CONFIG at another file to use a different one; nothing here is code.
+# Regexes are single-quoted so backslashes are literal.
+
+# Organisation, product, system and role names that must never be treated as people.
+allow_list:
+  - Cadence
+  - Cadence Design Systems
+  - Optiv
+  - OneTrust
+  - ServiceNow
+  - Archer
+  - Microsoft
+  - Microsoft Teams
+  - SharePoint
+  - Outlook
+  - Excel
+  - Word
+  - PowerPoint
+  - Azure
+  - AWS
+  - Google
+  - Okta
+  - Workday
+  - Salesforce
+  - SAP
+  - Oracle
+  - Jira
+  - Confluence
+  - Slack
+  - Zoom
+  - Acme
+  - AcmeCo
+  - Vendor Tier
+  - Risk Owner
+  - Control Owner
+  - Process Owner
+  - Business Owner
+  - Data Owner
+  - Risk Manager
+  - Risk Committee
+  - Audit Committee
+  - Board
+  - Board of Directors
+  - Internal Audit
+  - Compliance
+  - Legal
+  - Procurement
+  - Finance
+  - Human Resources
+  - HR
+  - Information Security
+  - InfoSec
+  - IT
+  - CISO
+  - CIO
+  - CEO
+  - CFO
+  - COO
+  - CRO
+  - CTO
+  - DPO
+  - GRC
+  - TPRM
+  - RCSA
+  - KRI
+  - KPI
+  - BCP
+  - DR
+  - SOC
+  - ISO
+  - NIST
+  - GDPR
+  - SOX
+  - PCI DSS
+  - Appendix
+  - Section
+  - Policy
+  - Procedure
+  - Standard
+  - Guideline
+  - Framework
+  - Register
+  - Questionnaire
+  - Assessment
+  - Inherent Risk
+  - Residual Risk
+  - Risk Appetite
+  - Risk Register
+  - Third Party
+  - Third-Party
+  - Vendor
+  - Supplier
+  - Engagement
+  - Dashboard
+  - Admin
+  - Administrator
+
+# Names to always redact (and propagate), even where no detector fires.
+deny_list: []
+
+# Internal identifier formats. Each becomes an L1 rule: name, entity (category), pattern, score.
+# OCR glues neighbours on ("EMP-41877sV", "EMP-41077IAM"), so there is no trailing \b; O/I/l read
+# for 0/1 are tolerated inside the number, but an ID must end on a real digit unless nothing
+# alphanumeric follows.
+id_patterns:
+  - name: cadence_person_id
+    entity: EMPLOYEE_ID
+    pattern: '(?<![0-9])(?:EMP|DIR|STF|CON|USR)-(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))'
+    score: 0.88
+  - name: cadence_vendor_id
+    entity: VENDOR_ID
+    pattern: '(?<![0-9])(?:MER|VEN|SUP)-[A-Z]{2}-(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))'
+    score: 0.80

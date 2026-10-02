@@ -6,7 +6,7 @@ import zipfile
 import pymupdf as fitz
 import pytest
 
-from pii_shield.evaluate import evaluate, load_gold, structure_retention
+from optiv_pii_shield.evaluate import evaluate, load_gold, structure_retention
 
 # Regression floor, not a claim. The measured numbers are printed by `test_report_metrics`.
 MIN_RECALL = 0.90
@@ -100,9 +100,14 @@ def test_structure_retention(run_result):
 
 def test_reports_written(run_result):
     out = run_result.out_dir
-    for name in ("pii_exposure_register.csv", "pii_exposure_register.xlsx", "summary.json", "audit_log.jsonl",
-                 "token_vault.SENSITIVE.json"):
+    for name in ("pii_exposure_register.csv", "pii_exposure_register.xlsx", "pii_exposure_register.SENSITIVE.csv",
+                 "summary.json", "audit_log.jsonl"):
         assert (out / name).exists(), name
+    # no passphrase in the test settings: the vault must not be on disk in any form
+    assert not list(out.glob("token_vault*")), list(out.glob("token_vault*"))
+    # the shareable register shows values partially masked only
+    reg = (out / "pii_exposure_register.csv").read_text(encoding="utf-8")
+    assert "Rafael Mendoza-Kowalski" not in reg and "R*********************i" in reg
     summary = json.loads((out / "summary.json").read_text())
     assert {f["file"] for f in summary["files"]} == set(run_result.docs)
     # audit log never holds raw values

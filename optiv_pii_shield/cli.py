@@ -1,19 +1,24 @@
 """Command line.
 
-    python -m pii_shield run samples/*.pdf samples/*.docx --out out/
-    python -m pii_shield run samples/synthetic/* --out out/ --gold samples/synthetic/gold_labels.csv
-    python -m pii_shield gold-template samples/*.pptx --out gold_draft.csv
+    python -m optiv_pii_shield run samples/*.pdf samples/*.docx --out out/
+    python -m optiv_pii_shield run samples/synthetic/* --out out/ --gold samples/synthetic/gold_labels.csv
+    python -m optiv_pii_shield gold-template samples/*.pptx --out gold_draft.csv
+    $env:PII_SHIELD_VAULT_KEY = "..." ; python -m optiv_pii_shield run ...      # also save the encrypted vault
+    python -m optiv_pii_shield vault-open out/token_vault.SENSITIVE.enc.json
 """
 from __future__ import annotations
 
 import argparse
+import getpass
 import glob
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
 from .config import Settings
+from .detect import ModelMissing
 from .evaluate import evaluate, gold_template, load_gold, structure_retention
 from .pipeline import run
 
@@ -33,12 +38,33 @@ def _settings(a) -> Settings:
     s.spacy_model = a.spacy_model
     if a.no_images:
         s.ocr_embedded_images = False
+    s.vault_passphrase = os.environ.get(getattr(a, "vault_key_env", VAULT_ENV)) or None
     return s
 
 
+VAULT_ENV = "PII_SHIELD_VAULT_KEY"
+
+
+def _vault_open(a) -> int:
+    from .redact.tokens import decrypt
+
+    passphrase = os.environ.get(a.vault_key_env) or getpass.getpass("vault passphrase: ")
+    try:
+        data = decrypt(json.loads(Path(a.vault).read_text(encoding="utf-8")), passphrase)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 4
+    sys.stdout.reconfigure(encoding="utf-8")
+    print(json.dumps(data, indent=2, ensure_ascii=False))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="pii_shield", description="Offline PII detection and redaction")
+    ap = argparse.ArgumentParser(prog="optiv_pii_shield", description="Offline PII detection and redaction")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    v = sub.add_parser("vault-open", help="decrypt a token vault and print it (authorised re-identification)")
+    v.add_argument("vault")
+    v.add_argument("--vault-key-env", default=VAULT_ENV, help="environment variable holding the passphrase")
     for name in ("run", "gold-template"):
         p = sub.add_parser(name)
         p.add_argument("files", nargs="+")
@@ -51,7 +77,12 @@ def main(argv: list[str] | None = None) -> int:
         if name == "run":
             p.add_argument("--gold", help="gold-label CSV: prints recall / precision / leaks")
             p.add_argument("--transcriptions", help="folder of <stem>.txt hand transcriptions for OCR'd PDFs")
+            p.add_argument("--vault-key-env", default=VAULT_ENV,
+                           help=f"environment variable holding the vault passphrase (default {VAULT_ENV}); "
+                                "unset = the token vault is not saved")
     a = ap.parse_args(argv)
+    if a.cmd == "vault-open":
+        return _vault_open(a)
     logging.basicConfig(level=logging.INFO if a.verbose else logging.WARNING, format="%(levelname)s %(message)s")
 
     files = _expand(a.files)
@@ -60,12 +91,15 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     progress = lambda msg, frac: print(f"[{frac:4.0%}] {msg}", file=sys.stderr)  # noqa: E731
 
-    if a.cmd == "gold-template":
-        res = run(files, _settings(a), None, progress)
-        print(f"wrote {gold_template(res.findings, a.out)}")
-        return 0
-
-    res = run(files, _settings(a), a.out, progress)
+    try:
+        if a.cmd == "gold-template":
+            res = run(files, _settings(a), None, progress)
+            print(f"wrote {gold_template(res.findings, a.out)}")
+            return 0
+        res = run(files, _settings(a), a.out, progress)
+    except ModelMissing as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 3
     print(f"\nrun {res.run_id}  components: {', '.join(res.components)}")
     for f, doc in res.docs.items():
         live = [x for x in res.findings[f] if x.decision != "drop"]

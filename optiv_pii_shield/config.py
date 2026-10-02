@@ -1,7 +1,11 @@
 """Tunable settings. Everything a reviewer might question lives here, in one place."""
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
 
 
 @dataclass
@@ -30,25 +34,35 @@ class Settings:
     low_conf_image_ocr: float = 0.80  # stricter floor for text read from screenshots / embedded images
     withhold_low_conf_images: bool = True  # text from images OCR'd below low_conf_ocr never reaches the LLM
 
+    # --- outputs ------------------------------------------------------------------
+    # The token vault is saved only when this is set, and only encrypted. Kept out of repr so it
+    # never lands in a log or traceback.
+    vault_passphrase: str | None = field(default=None, repr=False)
+
     # --- vocabularies -------------------------------------------------------------
     allow_list: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_LIST))
-    extra_deny_list: list[str] = field(default_factory=list)  # names to always redact
+    extra_deny_list: list[str] = field(default_factory=lambda: list(ORG["deny_list"]))  # names to always redact
 
 
+def load_org_config(path: str | Path | None = None) -> dict:
+    """Organisation-specific vocabulary (allow-list, deny-list, internal ID formats) from YAML:
+    ``path``, else $PII_SHIELD_ORG_CONFIG, else the bundled optiv_pii_shield/data/org.yaml."""
+    p = Path(path or os.environ.get("PII_SHIELD_ORG_CONFIG") or Path(__file__).parent / "data" / "org.yaml")
+    data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+    for i, rule in enumerate(data.get("id_patterns") or []):
+        missing = {"name", "entity", "pattern", "score"} - set(rule)
+        if missing:
+            raise ValueError(f"{p}: id_patterns[{i}] is missing {sorted(missing)}")
+    data.setdefault("allow_list", [])
+    data.setdefault("deny_list", [])
+    data.setdefault("id_patterns", [])
+    data["path"] = str(p)
+    return data
+
+
+ORG = load_org_config()
 # Organisation, product, system and role names that must never be treated as people.
-DEFAULT_ALLOW_LIST = [
-    "Cadence", "Cadence Design Systems", "Optiv", "OneTrust", "ServiceNow", "Archer", "Microsoft",
-    "Microsoft Teams", "SharePoint", "Outlook", "Excel", "Word", "PowerPoint", "Azure", "AWS", "Google",
-    "Okta", "Workday", "Salesforce", "SAP", "Oracle", "Jira", "Confluence", "Slack", "Zoom", "Acme",
-    "AcmeCo", "Vendor Tier", "Risk Owner", "Control Owner", "Process Owner", "Business Owner",
-    "Data Owner", "Risk Manager", "Risk Committee", "Audit Committee", "Board", "Board of Directors",
-    "Internal Audit", "Compliance", "Legal", "Procurement", "Finance", "Human Resources", "HR",
-    "Information Security", "InfoSec", "IT", "CISO", "CIO", "CEO", "CFO", "COO", "CRO", "CTO", "DPO",
-    "GRC", "TPRM", "RCSA", "KRI", "KPI", "BCP", "DR", "SOC", "ISO", "NIST", "GDPR", "SOX", "PCI DSS",
-    "Appendix", "Section", "Policy", "Procedure", "Standard", "Guideline", "Framework", "Register",
-    "Questionnaire", "Assessment", "Inherent Risk", "Residual Risk", "Risk Appetite", "Risk Register",
-    "Third Party", "Third-Party", "Vendor", "Supplier", "Engagement", "Dashboard", "Admin", "Administrator",
-]
+DEFAULT_ALLOW_LIST: list[str] = list(ORG["allow_list"])
 
 # Words that look like names to a statistical model but are business vocabulary.
 NOT_A_NAME_WORDS = {
@@ -99,6 +113,27 @@ HEADER_CATEGORIES: list[tuple[str, str]] = [
         "PERSON",
     ),
 ]
+
+# Exposure score (exposure.py). Sensitivity of one instance, 1-10: harm if it reached the wrong
+# party. Government and financial identifiers and credentials are at the top; a work e-mail or a
+# name alone is low but not zero.
+SENSITIVITY: dict[str, float] = {
+    "CREDENTIAL": 10, "US_SSN": 10, "PASSPORT": 10, "NATIONAL_ID": 10, "IN_AADHAAR": 10, "PL_PESEL": 10,
+    "CREDIT_CARD": 9, "IBAN_CODE": 8, "IN_PAN": 8, "TAX_ID": 7, "DATE_OF_BIRTH": 6, "ADDRESS": 5,
+    "PHONE_NUMBER": 4, "EMAIL_ADDRESS": 4, "PERSON": 3, "IP_ADDRESS": 3, "EMPLOYEE_ID": 3, "VENDOR_ID": 1,
+    "LOW_CONFIDENCE_OCR": 2, "_default": 3,
+}
+EXPOSURE_RATING = {"critical_weight": 9, "high_density": 25.0, "medium_density": 5.0}  # density = score per 1k words
+# Share of instances the detectors miss, by (category, source), measured on the held-out test seed
+# (2026-10-02, en_core_web_lg). Categories with no observed miss use the rule-of-three upper bound
+# 3/n over all structured instances (104). Re-measure after detection changes.
+MISS_RATES: dict = {
+    ("PERSON", "native"): 25 / 115,
+    ("PERSON", "ocr"): 6 / 15,
+    "_default": 3 / 104,
+    "_basis": "held-out test seed 2026-10-02: PERSON 25/115 missed (OCR-noise names 6/15); "
+              "structured identifiers 0/104 missed, rule-of-three bound 3/104 used",
+}
 
 # Regions tried for phone numbers written without "+", by the shape of the number (validators.py).
 PHONE_REGIONS: dict[str, list[str]] = {

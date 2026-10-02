@@ -1,9 +1,9 @@
 """Unit tests for validators, rules, name handling and structure (no models, no files)."""
-from pii_shield.detect import validators as v
-from pii_shield.detect.names import looks_like_name, name_variants, trim_to_name
-from pii_shield.detect.rules import run_rules
-from pii_shield.detect.structure import header_category, structure_findings
-from pii_shield.models import Span
+from optiv_pii_shield.detect import validators as v
+from optiv_pii_shield.detect.names import looks_like_name, name_variants, trim_to_name
+from optiv_pii_shield.detect.rules import run_rules
+from optiv_pii_shield.detect.structure import header_category, structure_findings
+from optiv_pii_shield.models import Span
 
 
 def hits(text, entity=None):
@@ -154,9 +154,9 @@ def test_damaged_email_fallback_does_not_extend_clean_email():
 
 
 def test_resolver_keeps_second_name_in_cell():
-    from pii_shield.config import Settings
-    from pii_shield.detect.resolver import finalise
-    from pii_shield.models import Document, Finding
+    from optiv_pii_shield.config import Settings
+    from optiv_pii_shield.detect.resolver import finalise
+    from optiv_pii_shield.models import Document, Finding
 
     span = Span(id="s1", file="f", text="Tamika Oliver\nShimane Smith", kind="table_cell", header="Assigned reviewers")
     doc = Document(file="f", path="f", file_type="docx", spans=[span])
@@ -168,7 +168,7 @@ def test_resolver_keeps_second_name_in_cell():
 
 # ------------------------------------------------------------------ screenshot fail-closed
 def test_image_text_emails_without_at():
-    from pii_shield.detect.rules import IMAGE_RULES
+    from optiv_pii_shield.detect.rules import IMAGE_RULES
 
     got = {r.entity_type: None for r in run_rules("x", None, IMAGE_RULES)}
     assert got == {}
@@ -179,8 +179,8 @@ def test_image_text_emails_without_at():
 
 
 def test_image_rules_only_apply_to_image_spans():
-    from pii_shield.config import Settings
-    from pii_shield.detect import Detector
+    from optiv_pii_shield.config import Settings
+    from optiv_pii_shield.detect import Detector
 
     det = Detector(Settings(use_spacy=False))
     body = Span(id="b", file="f", text="Contact via john.davis today", kind="paragraph", source="native")
@@ -190,8 +190,8 @@ def test_image_rules_only_apply_to_image_spans():
 
 
 def test_fuzzy_ocr_name_maps_to_confirmed_person():
-    from pii_shield.detect.propagation import PersonIndex, propagate
-    from pii_shield.models import Document
+    from optiv_pii_shield.detect.propagation import PersonIndex, propagate
+    from optiv_pii_shield.models import Document
 
     idx = PersonIndex()
     idx.add("John Davis", "table")
@@ -204,9 +204,9 @@ def test_fuzzy_ocr_name_maps_to_confirmed_person():
 
 
 def test_low_confidence_screenshot_identifier_is_masked():
-    from pii_shield.config import Settings
-    from pii_shield.detect import fail_closed_findings
-    from pii_shield.models import Document, Word
+    from optiv_pii_shield.config import Settings
+    from optiv_pii_shield.detect import fail_closed_findings
+    from optiv_pii_shield.models import Document, Word
 
     text = "Member martinezmaomeccrp.com Active"
     words = [Word(t, text.index(t), text.index(t) + len(t), (0, 0, 1, 1), 0.7) for t in text.split()]
@@ -228,8 +228,8 @@ def test_ocr_glue_around_phones_and_ids():
 
 
 def test_identifier_split_from_context_is_still_found():
-    from pii_shield.config import Settings
-    from pii_shield.detect import Detector
+    from optiv_pii_shield.config import Settings
+    from optiv_pii_shield.detect import Detector
 
     det = Detector(Settings(use_spacy=False))
     span = Span(id="s", file="f", text="555-0108", kind="image_ocr", source="image_ocr")
@@ -238,7 +238,7 @@ def test_identifier_split_from_context_is_still_found():
 
 
 def test_phone_ocr_variants():
-    from pii_shield.detect.rules import IMAGE_RULES
+    from optiv_pii_shield.detect.rules import IMAGE_RULES
 
     assert best("D.Kulkarni+918045550182 / Moderate", "PHONE_NUMBER")[1] == "+918045550182"
     t = "(mobile+I917555-0164)."
@@ -248,11 +248,11 @@ def test_phone_ocr_variants():
 # ------------------------------------------------------- names: any script, any letter case
 def _redacted(texts, settings=None):
     """Run the full detector + resolver + propagation over plain paragraphs; return redacted text."""
-    from pii_shield.config import Settings
-    from pii_shield.detect import Detector
-    from pii_shield.models import Document
-    from pii_shield.redact.text import redacted_span_texts
-    from pii_shield.redact.tokens import TokenVault
+    from optiv_pii_shield.config import Settings
+    from optiv_pii_shield.detect import Detector
+    from optiv_pii_shield.models import Document
+    from optiv_pii_shield.redact.text import redacted_span_texts
+    from optiv_pii_shield.redact.tokens import TokenVault
 
     s = settings or Settings(use_spacy=False)
     spans = [Span(id=f"s{i}", file="t", text=t, kind="paragraph", page=1, location=f"p{i}") for i, t in enumerate(texts)]
@@ -286,7 +286,7 @@ def test_trim_keeps_name_like_stopwords():
 
 
 def test_gazetteer_any_case():
-    from pii_shield.detect.names import gazetteer_names
+    from optiv_pii_shield.detect.names import gazetteer_names
 
     t = "follow up with rahul verma, PRIYA RAMAN and Łukasz Nowak today"
     got = {t[a:b] for a, b, _, _ in gazetteer_names(t)}
@@ -306,8 +306,8 @@ def test_propagation_ignores_case_for_full_names():
 
 
 def test_single_word_variant_does_not_spread_in_lowercase():
-    from pii_shield.detect.propagation import PersonIndex, propagate
-    from pii_shield.models import Document
+    from optiv_pii_shield.detect.propagation import PersonIndex, propagate
+    from optiv_pii_shield.models import Document
 
     idx = PersonIndex()
     idx.add("Larry Page", "t")

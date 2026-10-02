@@ -1,8 +1,8 @@
 """Layout detection on synthetic scans (no OCR needed: text lines are given directly)."""
 import numpy as np
 
-from pii_shield.extract.layout import find_header_bar_tables, find_tables, is_screenshot_grid
-from pii_shield.extract.ocr import OcrLine, OcrWord
+from optiv_pii_shield.extract.layout import find_header_bar_tables, find_tables, is_screenshot_grid
+from optiv_pii_shield.extract.ocr import OcrLine, OcrWord
 
 BODY_H = 30
 
@@ -76,7 +76,7 @@ def test_framed_card_is_screenshot_not_table():
 
 
 def test_word_glued_across_columns_is_split():
-    from pii_shield.extract.layout import TableGrid, assign_words_to_cells
+    from optiv_pii_shield.extract.layout import TableGrid, assign_words_to_cells
 
     text = "EMP-41077IAM"
     chars = [(100 + 20 * i, 118 + 20 * i) for i in range(len(text))]  # "IAM" starts at x=280
