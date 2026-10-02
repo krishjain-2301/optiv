@@ -13,7 +13,7 @@ from .detect import Detector
 from .extract import extract
 from .models import Document, Finding
 from .redact.files import write_masked
-from .redact.leakcheck import LeakError, build_needles, scrub_text
+from .redact.leakcheck import LeakError, build_needles, scrub_package, scrub_text
 from .redact.text import redacted_markdown
 from .redact.tokens import TokenVault
 from .report import write_reports
@@ -40,6 +40,29 @@ def output_stem(file: str) -> str:
     return Path(file).name
 
 
+SHAREABLE_REPORTS = ("register_csv", "register_xlsx", "summary_json", "audit_log")
+
+
+def _gate_shareable_reports(outputs: dict[str, Path], needles, errors: dict[str, str]) -> None:
+    """Reports meant for sharing get the same leak gate as masked files. Values are masked when the
+    reports are built; anything that still matches is a bug, so it is scrubbed and reported."""
+    for key in SHAREABLE_REPORTS:
+        path = outputs.get(key)
+        if path is None or not path.exists():
+            continue
+        if path.suffix == ".xlsx":
+            data, n = scrub_package(path.read_bytes(), needles)
+            if n:
+                path.write_bytes(data)
+        else:
+            text, n = scrub_text(path.read_text(encoding="utf-8"), needles)
+            if n:
+                path.write_text(text, encoding="utf-8")
+        if n:
+            log.error("%s: %d original value(s) found in a shareable report and scrubbed", path.name, n)
+            errors[path.name] = f"{n} original value(s) had to be scrubbed from this report (report bug)"
+
+
 _DETECTOR: dict[tuple, Detector] = {}
 
 
@@ -64,6 +87,8 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
     errors: dict[str, str] = {}
 
     t0 = time.perf_counter()
+    # Models first: a missing NER model must stop the run before minutes of OCR, not after.
+    detector = get_detector(settings)
     for i, p in enumerate(paths):
         p = Path(p)
         progress(f"Extracting {p.name}", i / max(len(paths), 1) * 0.6)
@@ -79,7 +104,6 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
 
     progress("Detecting PII", 0.65)
     t = time.perf_counter()
-    detector = get_detector(settings)
     findings = detector.detect_all(docs)
     timings["detect"] = round(time.perf_counter() - t, 2)
 
@@ -116,8 +140,12 @@ def run(paths: list[str | Path], settings: Optional[Settings] = None, out_dir: O
             except Exception as exc:
                 log.exception("masking failed for %s", f)
                 errors[f] = f"masking failed: {type(exc).__name__}: {exc}"
-        vault.save(out / "token_vault.SENSITIVE.json")
+        if settings.vault_passphrase:
+            outputs["vault"] = vault.save(out / "token_vault.SENSITIVE.enc.json", settings.vault_passphrase)
+        else:
+            log.warning("no vault passphrase: token vault not saved (tokens cannot be reversed later)")
         outputs.update(write_reports(out, docs, findings, run_id, detector.components))
+        _gate_shareable_reports(outputs, needles, errors)
     timings["total"] = round(time.perf_counter() - t0, 2)
     progress("Done", 1.0)
     return RunResult(run_id, docs, findings, vault, redacted, detector.components, timings, outputs, errors)

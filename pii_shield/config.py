@@ -30,6 +30,11 @@ class Settings:
     low_conf_image_ocr: float = 0.80  # stricter floor for text read from screenshots / embedded images
     withhold_low_conf_images: bool = True  # text from images OCR'd below low_conf_ocr never reaches the LLM
 
+    # --- outputs ------------------------------------------------------------------
+    # The token vault is saved only when this is set, and only encrypted. Kept out of repr so it
+    # never lands in a log or traceback.
+    vault_passphrase: str | None = field(default=None, repr=False)
+
     # --- vocabularies -------------------------------------------------------------
     allow_list: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_LIST))
     extra_deny_list: list[str] = field(default_factory=list)  # names to always redact

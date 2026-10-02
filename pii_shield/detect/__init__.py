@@ -17,7 +17,7 @@ from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 
 from ..config import Settings
 from ..models import Document, Finding, Span
-from .ner import build_nlp_engine, try_gliner
+from .ner import ModelMissing, build_nlp_engine, load_gliner
 from .names import upper_runs
 from .propagation import build_index, propagate
 from .resolver import finalise
@@ -38,24 +38,22 @@ class Detector:
         self.analyzer: AnalyzerEngine | None = None
         self.components: list[str] = ["L1 rules (PiiShieldRules)"]
         if self.settings.use_spacy:
-            try:
-                nlp_engine, model = build_nlp_engine(self.settings.spacy_model)
-            except RuntimeError as exc:
-                log.warning("%s; running rules only", exc)
-                nlp_engine = None
-            if nlp_engine is not None:
-                registry = RecognizerRegistry(supported_languages=["en"])
-                registry.add_recognizer(RuleRecognizer())
-                registry.add_recognizer(SpacyRecognizer(supported_entities=["PERSON"]))
-                self.components.append(f"L2 spaCy NER ({model})")
-                if self.settings.use_gliner:
-                    g = try_gliner(self.settings.gliner_model, self.settings.gliner_threshold)
-                    if g is not None:
-                        registry.add_recognizer(g)
-                        self.components.append(f"L2 GLiNER ({self.settings.gliner_model})")
-                self.analyzer = AnalyzerEngine(registry=registry, nlp_engine=nlp_engine, supported_languages=["en"])
-                supported = set(self.analyzer.get_supported_entities("en"))
-                self.analyzer_entities = [e for e in OUTPUT_ENTITIES if e in supported]
+            # Raises ModelMissing: running without the requested NER model is not a degraded mode
+            # we allow silently. Rules-only runs must be asked for (use_spacy=False).
+            nlp_engine, model = build_nlp_engine(self.settings.spacy_model)
+            registry = RecognizerRegistry(supported_languages=["en"])
+            registry.add_recognizer(RuleRecognizer())
+            registry.add_recognizer(SpacyRecognizer(supported_entities=["PERSON"]))
+            self.components.append(f"L2 spaCy NER ({model})")
+            if self.settings.use_gliner:
+                registry.add_recognizer(load_gliner(self.settings.gliner_model, self.settings.gliner_threshold))
+                self.components.append(f"L2 GLiNER ({self.settings.gliner_model})")
+            self.analyzer = AnalyzerEngine(registry=registry, nlp_engine=nlp_engine, supported_languages=["en"])
+            supported = set(self.analyzer.get_supported_entities("en"))
+            self.analyzer_entities = [e for e in OUTPUT_ENTITIES if e in supported]
+        else:
+            log.warning("NER disabled by settings (use_spacy=False): rules, structure and propagation only")
+            self.components.append("NER disabled (use_spacy=False)")
         self.allow = {a.lower() for a in self.settings.allow_list}
 
     # ---------------------------------------------------------------------------- per span
@@ -205,4 +203,4 @@ def fail_closed_findings(doc: Document, findings: list[Finding], s: Settings) ->
     return out
 
 
-__all__ = ["Detector", "OUTPUT_ENTITIES"]
+__all__ = ["Detector", "ModelMissing", "OUTPUT_ENTITIES"]

@@ -90,7 +90,7 @@ explicit allow-list of the shareable files below and never includes them.
 | `pii_exposure_register.SENSITIVE.csv` | The same with full original values | **yes** |
 | `summary.json` | Per-file counts: OCR pages, images and their status, categories, image-only identifiers, warnings | no |
 | `audit_log.jsonl` | Every decision including dropped candidates, values partially masked | no |
-| `token_vault.SENSITIVE.json` | Token → original value, for authorised re-identification | **yes** |
+| `token_vault.SENSITIVE.enc.json` | Token → original value, AES-256-GCM encrypted; written only when `PII_SHIELD_VAULT_KEY` (CLI) or the UI passphrase is set. Open with `python -m pii_shield vault-open` | **yes** |
 | `evaluation.json` | With `--gold`: recall, precision, leaks, per-category/source breakdown, structure retention | no |
 
 ## Fail-closed behaviour

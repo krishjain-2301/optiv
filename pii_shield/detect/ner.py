@@ -15,22 +15,27 @@ from presidio_analyzer.nlp_engine import NlpEngineProvider
 log = logging.getLogger(__name__)
 
 
+class ModelMissing(RuntimeError):
+    """A detection model the settings ask for is not installed. Never silently downgraded: a
+    pipeline that quietly drops to rules only (or to a weaker model) misses names without saying so."""
+
+
 def build_nlp_engine(model: str):
-    """Load the requested spaCy model, falling back to en_core_web_sm."""
-    for name in dict.fromkeys([model, "en_core_web_lg", "en_core_web_md", "en_core_web_sm"]):
-        if spacy.util.is_package(name):
-            conf = {
-                "nlp_engine_name": "spacy",
-                "models": [{"lang_code": "en", "model_name": name}],
-                "ner_model_configuration": {
-                    "labels_to_ignore": ["CARDINAL", "ORDINAL", "QUANTITY", "PERCENT", "MONEY", "TIME", "LAW",
-                                         "WORK_OF_ART", "PRODUCT", "EVENT", "LANGUAGE", "FAC"],
-                },
-            }
-            return NlpEngineProvider(nlp_configuration=conf).create_engine(), name
-    raise RuntimeError(
-        "No spaCy English model installed. Run: python -m spacy download en_core_web_lg"
-    )
+    """Load exactly the requested spaCy model."""
+    if not spacy.util.is_package(model):
+        raise ModelMissing(
+            f"spaCy model '{model}' is not installed. Install it with `python -m spacy download {model}`, "
+            f"or choose an installed model explicitly (--spacy-model). Refusing to run without NER."
+        )
+    conf = {
+        "nlp_engine_name": "spacy",
+        "models": [{"lang_code": "en", "model_name": model}],
+        "ner_model_configuration": {
+            "labels_to_ignore": ["CARDINAL", "ORDINAL", "QUANTITY", "PERCENT", "MONEY", "TIME", "LAW",
+                                 "WORK_OF_ART", "PRODUCT", "EVENT", "LANGUAGE", "FAC"],
+        },
+    }
+    return NlpEngineProvider(nlp_configuration=conf).create_engine(), model
 
 
 GLINER_LABELS = {
@@ -82,9 +87,10 @@ class GlinerRecognizer(EntityRecognizer):
         return out
 
 
-def try_gliner(model_name: str, threshold: float) -> Optional[GlinerRecognizer]:
+def load_gliner(model_name: str, threshold: float) -> GlinerRecognizer:
+    """GLiNER was asked for, so it must load: a missing package or uncached weights is an error."""
     try:
         return GlinerRecognizer(model_name, threshold)  # Presidio calls load() in __init__
     except Exception as exc:  # missing package, no weights cached and offline, ...
-        log.warning("GLiNER disabled: %s", exc)
-        return None
+        raise ModelMissing(f"GLiNER model '{model_name}' could not be loaded ({exc}). "
+                           "Install it (`pip install gliner`, then cache the weights once) or turn GLiNER off.") from exc

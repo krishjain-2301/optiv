@@ -5,11 +5,15 @@ table row, or the e-mail's local part matches the name), so an LLM can still rea
 "who did what": ``[PERSON_007]`` and ``[EMAIL_007]`` are the same individual.
 
 The vault (token -> original value) is the only place the originals survive. It is written to
-the output folder for authorised re-identification and must be stored as sensitive data.
+the output folder only when a passphrase is given, and then only encrypted (AES-256-GCM, key
+derived with scrypt). Without a passphrase it is never written: the originals do not persist.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
+import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -125,5 +129,47 @@ class TokenVault:
             "tokens": {t: sorted(v) for t, v in sorted(self.values.items())},
         }
 
-    def save(self, path: str | Path) -> None:
-        Path(path).write_text(json.dumps(self.to_json(), indent=2, ensure_ascii=False), encoding="utf-8")
+    def save(self, path: str | Path, passphrase: str) -> Path:
+        """Write the vault encrypted (AES-256-GCM, key from scrypt). There is no plaintext mode."""
+        if not passphrase:
+            raise ValueError("a passphrase is required to save the token vault")
+        path = Path(path)
+        path.write_text(json.dumps(encrypt(json.dumps(self.to_json(), ensure_ascii=False).encode("utf-8"), passphrase),
+                                   indent=2), encoding="utf-8")
+        return path
+
+
+# ------------------------------------------------------------------------------ vault crypto
+SCRYPT = {"n": 2 ** 15, "r": 8, "p": 1}
+
+
+def _key(passphrase: str, salt: bytes, n: int, r: int, p: int) -> bytes:
+    return hashlib.scrypt(passphrase.encode("utf-8"), salt=salt, n=n, r=r, p=p, maxmem=64 * 1024 * 1024, dklen=32)
+
+
+def encrypt(data: bytes, passphrase: str) -> dict:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    salt, nonce = os.urandom(16), os.urandom(12)
+    ct = AESGCM(_key(passphrase, salt, **SCRYPT)).encrypt(nonce, data, VAULT_AAD)
+    b64 = lambda b: base64.b64encode(b).decode("ascii")  # noqa: E731
+    return {"format": "pii-shield-vault/1", "cipher": "AES-256-GCM", "kdf": {"name": "scrypt", **SCRYPT, "salt": b64(salt)},
+            "nonce": b64(nonce), "ciphertext": b64(ct),
+            "warning": "SENSITIVE: maps pseudonymous tokens back to original PII. Restrict access."}
+
+
+def decrypt(envelope: dict, passphrase: str) -> dict:
+    """Open a saved vault. Raises ValueError on a wrong passphrase or a tampered file."""
+    from cryptography.exceptions import InvalidTag
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+    kdf = envelope["kdf"]
+    key = _key(passphrase, base64.b64decode(kdf["salt"]), kdf["n"], kdf["r"], kdf["p"])
+    try:
+        data = AESGCM(key).decrypt(base64.b64decode(envelope["nonce"]), base64.b64decode(envelope["ciphertext"]), VAULT_AAD)
+    except InvalidTag:
+        raise ValueError("wrong passphrase, or the vault file was modified") from None
+    return json.loads(data)
+
+
+VAULT_AAD = b"pii-shield-vault/1"

@@ -8,7 +8,6 @@ from __future__ import annotations
 import html
 import io
 import sys
-import tempfile
 import zipfile
 from pathlib import Path
 
@@ -20,7 +19,8 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from pii_shield import Settings, run  # noqa: E402
+from pii_shield import Settings, run, workspace  # noqa: E402
+from pii_shield.detect import ModelMissing  # noqa: E402
 from pii_shield.evaluate import evaluate, gold_template, load_gold, structure_retention  # noqa: E402
 from pii_shield.report import file_summary, findings_frame  # noqa: E402
 
@@ -62,8 +62,17 @@ with st.sidebar:
     extra_deny = st.text_area("Always-redact names (one per line)", "")
     s.allow_list = s.allow_list + [x.strip() for x in extra_allow.splitlines() if x.strip()]
     s.extra_deny_list = [x.strip() for x in extra_deny.splitlines() if x.strip()]
+    s.vault_passphrase = st.text_input(
+        "Vault passphrase (optional)", type="password",
+        help="With a passphrase the token vault is saved encrypted (AES-256-GCM) for authorised "
+             "re-identification. Without one it is not saved at all.") or None
     st.divider()
     gold_file = st.file_uploader("Gold labels CSV (optional)", type=["csv"])
+    if st.session_state.get("work") and st.button("Delete this session's files now",
+                                                  help="Uploads, extracted text, reports and masked copies"):
+        workspace.empty(st.session_state["work"])
+        st.session_state.pop("result", None)
+        st.success("Deleted.")
 
 
 # ------------------------------------------------------------------------------------ input
@@ -75,22 +84,46 @@ use_synth = c2.button("Use synthetic samples", help="Generated test artifacts wi
 go = c2.button("Run pipeline", type="primary", disabled=not uploads)
 
 
-def _run(paths: list[Path], gold_path: Path | None):
-    work = Path(tempfile.mkdtemp(prefix="pii_shield_out_"))
+@st.cache_resource
+def _sweep_once() -> int:
+    """Once per server start: remove folders left by sessions that ended."""
+    return workspace.sweep_stale()
+
+
+_sweep_once()
+if "work" not in st.session_state:
+    st.session_state["work"] = workspace.new_session()
+WORK: Path = st.session_state["work"]
+
+
+def _fresh_run_dirs() -> tuple[Path, Path]:
+    """Everything from the previous run in this session (uploads, outputs, extracted text) is
+    deleted before a new run starts."""
+    workspace.empty(WORK)
+    return (WORK / "in").resolve(), (WORK / "out").resolve()
+
+
+def _run(paths: list[Path], gold_path: Path | None, out: Path):
     bar = st.progress(0.0, "Starting")
-    res = run(paths, s, work, progress=lambda m, f: bar.progress(min(f, 1.0), m))
+    try:
+        res = run(paths, s, out, progress=lambda m, f: bar.progress(min(f, 1.0), m))
+    except ModelMissing as exc:
+        bar.empty()
+        st.error(str(exc))
+        st.stop()
     bar.empty()
-    st.session_state.update(result=res, out_dir=work, gold_path=gold_path)
+    st.session_state.update(result=res, out_dir=out, gold_path=gold_path)
 
 
 if use_synth:
     import make_samples
 
-    d = Path(tempfile.mkdtemp(prefix="pii_shield_samples_"))
+    d, out = _fresh_run_dirs()
     make_samples.main(str(d))
-    _run(sorted(p for p in d.iterdir() if p.suffix in (".pdf", ".docx", ".pptx")), d / "gold_labels.csv")
+    _run(sorted(p for p in d.iterdir() if p.suffix in (".pdf", ".docx", ".pptx")), d / "gold_labels.csv", out)
 elif go and uploads:
-    d = Path(tempfile.mkdtemp(prefix="pii_shield_in_"))
+    d, out = _fresh_run_dirs()
+    d.mkdir(parents=True, exist_ok=True)
     paths = []
     for u in uploads:
         p = d / Path(u.name).name
@@ -100,14 +133,18 @@ elif go and uploads:
     if gold_file is not None:
         gp = d / "gold.csv"
         gp.write_bytes(gold_file.getbuffer())
-    _run(paths, gp)
+    _run(paths, gp, out)
 
 res = st.session_state.get("result")
 if res is None:
     st.info("Upload files and press **Run pipeline**, or try the synthetic samples.")
     st.stop()
+if not st.session_state["out_dir"].exists():
+    st.session_state.pop("result")
+    st.info("This run's files were deleted. Upload files to start again.")
+    st.stop()
 if gold_file is not None and st.session_state.get("gold_path") is None:
-    gp = Path(tempfile.mkdtemp()) / "gold.csv"
+    gp = WORK / "gold.csv"
     gp.write_bytes(gold_file.getbuffer())
     st.session_state["gold_path"] = gp
 
@@ -265,7 +302,7 @@ with tabs[4]:
     if not gp:
         st.info("Upload a gold-label CSV in the sidebar to measure recall and precision. "
                 "No recall figure is shown without one.")
-        tmp = Path(tempfile.mkdtemp()) / "gold_draft.csv"
+        tmp = WORK / "gold_draft.SENSITIVE.csv"
         gold_template(res.findings, tmp)
         st.download_button("Download a draft gold file to correct by hand", tmp.read_bytes(), "gold_draft.csv")
     else:

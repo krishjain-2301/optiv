@@ -7,6 +7,7 @@ log (with why they were dropped) so false-positive controls can be inspected too
 from __future__ import annotations
 
 import json
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,14 +28,39 @@ def mask_value(v: str) -> str:
     return v[0] + "*" * (len(v) - 2) + v[-1]
 
 
+def value_set(findings: dict[str, list[Finding]]) -> re.Pattern | None:
+    """Every value the run looked at (kept or dropped), and each word of it, as one pattern."""
+    vals = set()
+    for fs in findings.values():
+        for f in fs:
+            v = f.text.strip()
+            if len(v) >= 3:
+                vals.add(v)
+                vals.update(w for w in re.split(r"[\s,;()]+", v) if len(w) >= 3)
+    if not vals:
+        return None
+    body = "|".join(re.escape(v) for v in sorted(vals, key=len, reverse=True))
+    return re.compile(rf"(?<![^\W_])(?:{body})(?![^\W_])", re.IGNORECASE)
+
+
+def mask_reasons(reasons: list[str], values: re.Pattern | None) -> list[str]:
+    """Reasons quote what they matched ("matches confirmed person 'Priya Raman'", "trimmed 'X' to
+    'Y'"). In shareable outputs every value the run looked at, or any word of one, is masked
+    wherever it occurs in a reason; labels and keywords ("field label 'Full name:'") stay readable."""
+    if values is None:
+        return list(reasons)
+    return [values.sub(lambda m: mask_value(m.group()), r) for r in reasons]
+
+
 def findings_frame(findings: dict[str, list[Finding]], include_dropped: bool = False, reveal: bool = True) -> pd.DataFrame:
     rows = []
+    values = None if reveal else value_set(findings)
     for fs in findings.values():
         for f in fs:
             if f.decision == "drop" and not include_dropped:
                 continue
             d = f.to_dict()
-            d["reasons"] = "; ".join(f.reasons)
+            d["reasons"] = "; ".join(f.reasons if reveal else mask_reasons(f.reasons, values))
             if not reveal:
                 d["text"] = mask_value(f.text)
             rows.append(d)
@@ -80,13 +106,14 @@ def image_only_values(findings: list[Finding]) -> list[dict]:
 def audit_records(findings: dict[str, list[Finding]], run_id: str) -> list[dict]:
     ts = datetime.now(timezone.utc).isoformat()
     recs = []
+    values = value_set(findings)
     for fs in findings.values():
         for f in fs:
             recs.append({
                 "run_id": run_id, "timestamp": ts, "file": f.file, "page": f.page, "location": f.location,
                 "span_id": f.span_id, "start": f.start, "end": f.end, "entity_type": f.entity_type,
                 "value_masked": mask_value(f.text), "token": f.token, "score": f.score, "decision": f.decision,
-                "layer": f.layer, "recognizer": f.recognizer, "reasons": f.reasons,
+                "layer": f.layer, "recognizer": f.recognizer, "reasons": mask_reasons(f.reasons, values),
             })
     return recs
 
