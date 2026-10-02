@@ -372,3 +372,20 @@ def test_labelled_out_of_range_aadhaar_still_caught():
     assert best("Aadhaar 1416 1090 6499", "IN_AADHAAR")[2] >= 0.35
     h = best("ref 1416 1090 6499", "IN_AADHAAR")
     assert h is None or h[2] < 0.35
+
+
+# ---------------------------------------------------------------------------- GLiNER
+def test_gliner_hits_must_look_like_a_value():
+    from optiv_pii_shield.detect.ner import gliner_extent
+
+    t = "E-mail: tprm-office@cadence-demo.example, Passport No K4829175, home 14 Harrow Lane"
+    assert gliner_extent("EMAIL_ADDRESS", t, 0, 6) is None  # the label "E-mail" is not an address
+    s = t.index("tprm-office")
+    assert t[slice(*gliner_extent("EMAIL_ADDRESS", t, s, s + 24))] == "tprm-office@cadence-demo.example"  # cut short
+    assert gliner_extent("PASSPORT", t, t.index("Passport"), t.index("Passport") + 11) is None
+    s = t.index("K4829175")
+    assert gliner_extent("PASSPORT", t, s, s + 8) == (s, s + 8)
+    s = t.index("14 Harrow")
+    assert gliner_extent("ADDRESS", t, s, len(t)) == (s, len(t))
+    assert gliner_extent("ADDRESS", t, t.index("home"), t.index("home") + 4) is None
+    assert gliner_extent("PERSON", "Name", 0, 4) == (0, 4)  # name shape is the resolver's job
