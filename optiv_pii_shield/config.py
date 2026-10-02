@@ -46,7 +46,7 @@ class Settings:
 
 def load_org_config(path: str | Path | None = None) -> dict:
     """Organisation-specific vocabulary (allow-list, deny-list, internal ID formats) from YAML:
-    ``path``, else $PII_SHIELD_ORG_CONFIG, else the bundled pii_shield/data/org.yaml."""
+    ``path``, else $PII_SHIELD_ORG_CONFIG, else the bundled optiv_pii_shield/data/org.yaml."""
     p = Path(path or os.environ.get("PII_SHIELD_ORG_CONFIG") or Path(__file__).parent / "data" / "org.yaml")
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     for i, rule in enumerate(data.get("id_patterns") or []):

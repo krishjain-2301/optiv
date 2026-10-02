@@ -1,9 +1,9 @@
 """Exposure score and residual risk."""
 import json
 
-from pii_shield.config import SENSITIVITY
-from pii_shield.exposure import file_exposure
-from pii_shield.models import Document, Finding, ImageRef, Span
+from optiv_pii_shield.config import SENSITIVITY
+from optiv_pii_shield.exposure import file_exposure
+from optiv_pii_shield.models import Document, Finding, ImageRef, Span
 
 
 def _doc(findings_spec, words_per_page=100, pages=2):

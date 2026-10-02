@@ -6,10 +6,10 @@ import time
 
 import pytest
 
-from pii_shield import workspace
-from pii_shield.config import Settings
-from pii_shield.detect import Detector, ModelMissing
-from pii_shield.redact.tokens import TokenVault, decrypt
+from optiv_pii_shield import workspace
+from optiv_pii_shield.config import Settings
+from optiv_pii_shield.detect import Detector, ModelMissing
+from optiv_pii_shield.redact.tokens import TokenVault, decrypt
 
 
 def test_missing_spacy_model_is_an_error_not_a_fallback():
@@ -18,7 +18,7 @@ def test_missing_spacy_model_is_an_error_not_a_fallback():
 
 
 def test_missing_model_stops_run_before_extraction(tmp_path, monkeypatch):
-    import pii_shield.pipeline as pl
+    import optiv_pii_shield.pipeline as pl
 
     def boom(*a, **k):
         raise AssertionError("extraction must not start without the models")
@@ -45,7 +45,7 @@ def test_vault_is_encrypted_and_round_trips(tmp_path):
 
 
 def test_cli_vault_round_trip(tmp_path, monkeypatch, capsys):
-    from pii_shield.cli import main
+    from optiv_pii_shield.cli import main
 
     v = TokenVault()
     v.values["[EMAIL_001]"].add("kofi@example.com")
@@ -74,7 +74,7 @@ def test_workspace_empty_and_sweep(tmp_path, monkeypatch):
 
 
 def test_org_config_from_yaml(tmp_path):
-    from pii_shield.config import load_org_config
+    from optiv_pii_shield.config import load_org_config
 
     p = tmp_path / "org.yaml"
     p.write_text("allow_list: [Contoso]\nid_patterns:\n  - {name: badge, entity: EMPLOYEE_ID, pattern: 'BDG-[0-9]{5}', score: 0.9}\n",
@@ -87,13 +87,13 @@ def test_org_config_from_yaml(tmp_path):
 
 
 def test_bundled_org_rules_loaded():
-    from pii_shield.detect.rules import RULES
+    from optiv_pii_shield.detect.rules import RULES
 
     assert {"cadence_person_id", "cadence_vendor_id"} <= {r.name for r in RULES}
 
 
 def test_missing_ocr_model_is_an_error(monkeypatch, tmp_path):
-    from pii_shield.extract import ocr
+    from optiv_pii_shield.extract import ocr
 
     monkeypatch.setenv("PII_SHIELD_REC_MODEL", str(tmp_path / "missing.onnx"))
     ocr.get_engine.cache_clear()

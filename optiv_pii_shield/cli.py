@@ -1,10 +1,10 @@
 """Command line.
 
-    python -m pii_shield run samples/*.pdf samples/*.docx --out out/
-    python -m pii_shield run samples/synthetic/* --out out/ --gold samples/synthetic/gold_labels.csv
-    python -m pii_shield gold-template samples/*.pptx --out gold_draft.csv
-    $env:PII_SHIELD_VAULT_KEY = "..." ; python -m pii_shield run ...      # also save the encrypted vault
-    python -m pii_shield vault-open out/token_vault.SENSITIVE.enc.json
+    python -m optiv_pii_shield run samples/*.pdf samples/*.docx --out out/
+    python -m optiv_pii_shield run samples/synthetic/* --out out/ --gold samples/synthetic/gold_labels.csv
+    python -m optiv_pii_shield gold-template samples/*.pptx --out gold_draft.csv
+    $env:PII_SHIELD_VAULT_KEY = "..." ; python -m optiv_pii_shield run ...      # also save the encrypted vault
+    python -m optiv_pii_shield vault-open out/token_vault.SENSITIVE.enc.json
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def _vault_open(a) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="pii_shield", description="Offline PII detection and redaction")
+    ap = argparse.ArgumentParser(prog="optiv_pii_shield", description="Offline PII detection and redaction")
     sub = ap.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("vault-open", help="decrypt a token vault and print it (authorised re-identification)")
     v.add_argument("vault")

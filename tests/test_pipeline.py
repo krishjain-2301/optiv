@@ -6,7 +6,7 @@ import zipfile
 import pymupdf as fitz
 import pytest
 
-from pii_shield.evaluate import evaluate, load_gold, structure_retention
+from optiv_pii_shield.evaluate import evaluate, load_gold, structure_retention
 
 # Regression floor, not a claim. The measured numbers are printed by `test_report_metrics`.
 MIN_RECALL = 0.90

@@ -6,7 +6,7 @@ Structured identifiers must never leak. Names are held to a regression floor rat
 because they do leak today: see the printed report and README "Known limits"."""
 import pytest
 
-from pii_shield.redact.text import redacted_span_texts
+from optiv_pii_shield.redact.text import redacted_span_texts
 
 # Regression floors measured on the test seed; raise them when detection improves, never lower
 # them to make a change pass.
@@ -19,7 +19,7 @@ ZERO_LEAK = {"PHONE_NUMBER", "EMAIL_ADDRESS", "IP_ADDRESS", "IBAN_CODE", "CREDIT
 @pytest.fixture(scope="module")
 def heldout(tmp_path_factory, settings):
     import make_heldout as mh
-    from pii_shield import run
+    from optiv_pii_shield import run
 
     paras = mh.generate("test")
     tmp = tmp_path_factory.mktemp("heldout")

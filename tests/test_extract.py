@@ -2,8 +2,8 @@
 import pytest
 from lxml import etree
 
-from pii_shield.extract import extract, sniff
-from pii_shield.extract.ooxml import W, TextUnit, apply_replacements, build_unit
+from optiv_pii_shield.extract import extract, sniff
+from optiv_pii_shield.extract.ooxml import W, TextUnit, apply_replacements, build_unit
 
 
 def test_apply_replacements_across_runs():

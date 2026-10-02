@@ -53,7 +53,7 @@ RULES: list[Rule] = [
          # A leading "+" may follow a letter: OCR glues names to numbers ("Whitfield+1(212)555-0147").
          r"(?:(?<![0-9/+-])\+\d{1,3}[\s.-]?|(?<![\w/+-]))(?:\(\d{1,5}\)[\s.-]?)?\d{1,12}(?:[\s.-]\d{1,8}){0,5}(?![\w/-])",
          0.40, v.check_phone, ctx("PHONE_NUMBER"), min_digits=7),
-    # Organisation-specific identifier formats come from pii_shield/data/org.yaml (id_patterns).
+    # Organisation-specific identifier formats come from optiv_pii_shield/data/org.yaml (id_patterns).
     *[Rule(r["name"], r["entity"], r["pattern"], float(r["score"]), None, ctx(r["entity"])) for r in ORG["id_patterns"]],
     Rule("us_ssn", "US_SSN", r"(?<![\d-])\d{3}[- ]\d{2}[- ]\d{4}(?![\d-])", 0.45, v.check_ssn, ctx("US_SSN")),
     Rule("passport", "PASSPORT", r"\b[A-Z]{1,2}\d{6,8}\b", 0.20, None, ctx("PASSPORT"), requires_context=True),

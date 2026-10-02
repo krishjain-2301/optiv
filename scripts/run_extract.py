@@ -17,8 +17,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from pii_shield.config import Settings  # noqa: E402
-from pii_shield.extract import extract, sniff  # noqa: E402
+from optiv_pii_shield.config import Settings  # noqa: E402
+from optiv_pii_shield.extract import extract, sniff  # noqa: E402
 
 
 def report(path: Path, settings: Settings, out: Path | None) -> bool:

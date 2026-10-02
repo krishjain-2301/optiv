@@ -32,7 +32,7 @@ def make_xlsx(path):
 
 @pytest.fixture(scope="module")
 def xlsx_run(tmp_path_factory, settings):
-    from pii_shield import run
+    from optiv_pii_shield import run
 
     src = tmp_path_factory.mktemp("xlsx")
     make_xlsx(src / "contacts.xlsx")

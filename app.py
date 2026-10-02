@@ -19,10 +19,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from pii_shield import Settings, run, workspace  # noqa: E402
-from pii_shield.detect import ModelMissing  # noqa: E402
-from pii_shield.evaluate import evaluate, gold_template, load_gold, structure_retention  # noqa: E402
-from pii_shield.report import file_summary, findings_frame  # noqa: E402
+from optiv_pii_shield import Settings, run, workspace  # noqa: E402
+from optiv_pii_shield.detect import ModelMissing  # noqa: E402
+from optiv_pii_shield.evaluate import evaluate, gold_template, load_gold, structure_retention  # noqa: E402
+from optiv_pii_shield.report import file_summary, findings_frame  # noqa: E402
 
 st.set_page_config(page_title="PII Shield", layout="wide")
 
@@ -216,7 +216,7 @@ def page_preview(doc, page_no: int, findings) -> bytes | None:
         return None
     pdf = fitz.open(doc.path)
     page = pdf[page_no - 1]
-    from pii_shield.redact.files import finding_boxes
+    from optiv_pii_shield.redact.files import finding_boxes
 
     for f in findings:
         if f.decision == "drop" or f.page != page_no:

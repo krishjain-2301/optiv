@@ -12,7 +12,7 @@ from lxml import etree
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 
-from pii_shield.extract.ooxml import W
+from optiv_pii_shield.extract.ooxml import W
 
 PLANTED_DOCX = {
     "mailto": "kofi.mensah@example.com",
@@ -130,7 +130,7 @@ def surviving(path: Path, values) -> list[tuple[str, str]]:
 
 @pytest.fixture(scope="module")
 def planted_run(tmp_path_factory, settings):
-    from pii_shield import run
+    from optiv_pii_shield import run
 
     src = tmp_path_factory.mktemp("planted")
     make_docx(src / "planted.docx")
@@ -179,8 +179,8 @@ def test_chart_and_description_reach_the_llm_text_redacted(planted_run):
 
 
 def test_gate_refuses_a_package_with_a_surviving_value(tmp_path):
-    from pii_shield.redact.leakcheck import LeakError, build_needles, check_package, scrub_package
-    from pii_shield.redact.tokens import TokenVault
+    from optiv_pii_shield.redact.leakcheck import LeakError, build_needles, check_package, scrub_package
+    from optiv_pii_shield.redact.tokens import TokenVault
 
     data = io.BytesIO()
     with zipfile.ZipFile(data, "w") as z:
@@ -194,8 +194,8 @@ def test_gate_refuses_a_package_with_a_surviving_value(tmp_path):
 
 
 def test_gate_finds_values_split_across_runs_and_escaped():
-    from pii_shield.redact.leakcheck import build_needles, scan_bytes
-    from pii_shield.redact.tokens import TokenVault
+    from optiv_pii_shield.redact.leakcheck import build_needles, scan_bytes
+    from optiv_pii_shield.redact.tokens import TokenVault
 
     v = TokenVault()
     v.values["[PERSON_001]"].add("Zoë O'Brien")

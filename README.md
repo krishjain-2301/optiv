@@ -43,7 +43,7 @@ Missing models are errors, not fallbacks: if the configured spaCy model (`--spac
 file is read. Rules-only runs must be asked for explicitly (`Settings(use_spacy=False)`).
 
 Organisation-specific vocabulary (allow-list of product/team names, always-redact names, internal ID formats
-such as `EMP-40718` / `MER-IN-0042`) lives in `pii_shield/data/org.yaml`; point `PII_SHIELD_ORG_CONFIG` at
+such as `EMP-40718` / `MER-IN-0042`) lives in `optiv_pii_shield/data/org.yaml`; point `PII_SHIELD_ORG_CONFIG` at
 another file for another client. CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned
 dependencies.
 
@@ -71,15 +71,15 @@ Upload files (or press *Use synthetic samples*). The tabs show the overview, ext
 **CLI**
 
 ```powershell
-python -m pii_shield run path\to\*.pdf path\to\*.docx --out out
-python -m pii_shield run samples\synthetic\* --out out --gold samples\synthetic\gold_labels.csv
-python -m pii_shield gold-template path\to\files\* --out gold_draft.csv   # bootstrap gold labels, then correct by hand
+python -m optiv_pii_shield run path\to\*.pdf path\to\*.docx --out out
+python -m optiv_pii_shield run samples\synthetic\* --out out --gold samples\synthetic\gold_labels.csv
+python -m optiv_pii_shield gold-template path\to\files\* --out gold_draft.csv   # bootstrap gold labels, then correct by hand
 ```
 
 **Python**
 
 ```python
-from pii_shield import run, Settings
+from optiv_pii_shield import run, Settings
 res = run(["policy.pdf"], Settings(), out_dir="out")
 res.redacted["policy.pdf"]        # LLM-safe Markdown
 res.findings["policy.pdf"]        # findings with location, category, token, score, layer, reasons
@@ -102,12 +102,12 @@ explicit allow-list of the shareable files below and never includes them.
 | `pii_exposure_register.SENSITIVE.csv` | The same with full original values | **yes** |
 | `summary.json` | Per-file counts: OCR pages, images and their status, categories, image-only identifiers, warnings | no |
 | `audit_log.jsonl` | Every decision including dropped candidates, values partially masked | no |
-| `token_vault.SENSITIVE.enc.json` | Token → original value, AES-256-GCM encrypted; written only when `PII_SHIELD_VAULT_KEY` (CLI) or the UI passphrase is set. Open with `python -m pii_shield vault-open` | **yes** |
+| `token_vault.SENSITIVE.enc.json` | Token → original value, AES-256-GCM encrypted; written only when `PII_SHIELD_VAULT_KEY` (CLI) or the UI passphrase is set. Open with `python -m optiv_pii_shield vault-open` | **yes** |
 | `evaluation.json` | With `--gold`: recall, precision, leaks, per-category/source breakdown, structure retention | no |
 
 ## Exposure score
 
-`summary.json` (and the Overview tab) gives each file an exposure profile (`pii_shield/exposure.py`, weights in
+`summary.json` (and the Overview tab) gives each file an exposure profile (`optiv_pii_shield/exposure.py`, weights in
 `config.py`):
 
 - **score**: sum of sensitivity weights (1-10) over every PII instance found: credentials and government or
@@ -200,14 +200,14 @@ The test seed was inspected once, before one fix: a labelled Aadhaar starting wi
 rule was widened (labelled → review band). Treat the Aadhaar line as no longer held out.
 
 **Known limits.** Names leak when no layer has evidence: lowercase names whose given name is not in
-`pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
+`optiv_pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
 that no keyword, header or confirmed mention supports, and names garbled by OCR beyond one or two digit
 confusions. Turning on GLiNER (`--gliner`) is the intended mitigation; it has not been measured here.
 
 ## Layout
 
 ```
-pii_shield/
+optiv_pii_shield/
   config.py            thresholds, header→category map, context words, sensitivity weights
   data/                org.yaml (allow-list, deny-list, ID formats), given_names.txt (gazetteer)
   models.py            Span / Word / ImageRef / Document / Finding
