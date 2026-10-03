@@ -323,3 +323,35 @@ pytest -q
 CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned dependencies. Synthetic fixtures
 come from `python scripts/make_samples.py samples/synthetic`: a scanned PDF, a DOCX and a PPTX with invented
 people that reproduce the traps found in real samples, plus `gold_labels.csv`.
+
+## Project layout
+
+```
+optiv_pii_shield/
+  config.py            thresholds, header→category map, context words, sensitivity weights
+  data/                org.yaml (allow-list, deny-list, ID formats), given_names.txt (gazetteer)
+  models.py            Span / Word / ImageRef / Document / Finding
+  extract/             sniff, pdf, docx, pptx, image, ooxml walkers, layout (tables/regions), ocr backends
+  detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver
+  redact/              tokens (vault), text (LLM output), files (masked PDF/DOCX/PPTX/XLSX/images), leakcheck
+  exposure.py          exposure score and residual risk
+  workspace.py         per-session working folders and their removal
+  render.py            spans → Markdown (shared by extracted and redacted views)
+  report.py            exposure register, summary, audit log
+  evaluate.py          gold labels, recall/precision/leaks, structure retention
+  pipeline.py, cli.py
+app.py                 starts the dashboard server and opens the browser
+server/
+  api.py               FastAPI routes (/api/scan, /api/run, ...) and hosting of web/dist
+  session.py           the one local session: working folder, background scan (progress, pause, cancel), result
+  payloads.py          the JSON the dashboard is sent: the run, one document's detail, the evaluation
+web/                   React + TypeScript dashboard (Vite)
+  src/api.ts           types of the server's JSON and the calls that fetch it
+  src/store.tsx        app state: current run, scan in progress, scan settings, queued files
+  src/components/      header, step bar, stat tiles, cards, charts, table, form controls
+  src/pages/           one file per mode: Scan, Overview, Exposure, Findings, Extraction, Redaction,
+                       Evaluation, Reports
+  src/lib/entities.ts  entity labels, category groups and chart colours
+scripts/make_samples.py
+tests/
+```
