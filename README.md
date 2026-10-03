@@ -75,3 +75,51 @@ Prefer the terminal? Skip the `web/` step and run
 > **Missing models are errors, not fallbacks.** If the spaCy model (`--spacy-model`, default `en_core_web_lg`),
 > the English OCR model or (when requested) GLiNER is not installed, the run stops before any file is read.
 > Rules-only runs must be asked for explicitly with `Settings(use_spacy=False)`.
+
+## How it works
+
+```mermaid
+flowchart LR
+    A[Upload] --> B[Sniff type<br/>magic bytes]
+    B --> C[EXTRACT<br/>text, OCR, OOXML]
+    C --> D[DETECT<br/>L0 to L4 + resolver]
+    D --> E[REDACT<br/>tokens, Markdown, masked files]
+    E --> G{Leak gate}
+    G -- clean --> F[REPORT<br/>register, score, audit log, vault]
+    G -- value found --> X[File withheld]
+    F --> H[MEASURE<br/>recall, precision, leaks]
+```
+
+### 1. Extract
+
+| Source | What is read |
+|---|---|
+| PDF | Text layer, or layout-aware OCR for scans: ruled tables cell by cell, screenshots re-read at 2x |
+| DOCX / PPTX | Body, tables, text boxes, groups, headers/footers, notes, comments, document properties, customXml, comment and tracked-change authors, embedded images (OCR), alt text, charts, SmartArt, link targets, field codes |
+| XLSX | Every sheet (hidden too), cells under their column headers, formulas, comments, properties |
+| Images | OCR with per-character positions |
+
+Everything lands in a **span map**: file, page or slide, element, table cell and column header, bounding box,
+OCR confidence.
+
+### 2. Detect
+
+| Layer | Method |
+|---|---|
+| **L1** Rules | Patterns, checksums and context words (inside Presidio) |
+| **L2** NER | spaCy, optional GLiNER-PII (inside Presidio) |
+| **L3** Structure | Column headers, `Label:` fields, document properties |
+| **L4** Propagation | Every confirmed person is searched across all files: surname, initial, possessive |
+| **L0** Fail-closed | Identifier-like OCR words below the confidence floor |
+| **Resolver** | Trim and allow-list, merge overlaps, agreement bonus, route to redact / review / drop |
+
+### 3. Redact
+
+Stable tokens such as `[PERSON_007]` and `[EMAIL_007]` are shared across files. The pipeline writes redacted
+Markdown for the LLM and masked PDF/DOCX/PPTX/XLSX copies with layout and page count kept and author metadata
+cleared. The **leak gate** then checks that no vault value survives in any output, or the file is not written.
+
+### 4. Report and measure
+
+Exposure register (CSV/XLSX), exposure score and residual risk, audit log, and an encrypted token vault.
+With gold labels, recall, precision and leaks are reported per category and per source type.
