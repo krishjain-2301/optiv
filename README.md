@@ -147,3 +147,49 @@ hits must look like a value of their category before they count, because it also
 in a table header.
 
 **Vault key.** Set `PII_SHIELD_VAULT_KEY` (CLI) or a passphrase in the UI to write the encrypted token vault.
+
+## Dashboard
+
+```powershell
+cd web; npm install; npm run build; cd ..   # once, and after changing web/
+python app.py                               # http://127.0.0.1:8000, opens the browser
+```
+
+A FastAPI server (`server/`) on `127.0.0.1` runs the pipeline and hosts a React dashboard (`web/`). Everything
+the page needs is bundled by the build: no CDN, no web fonts, nothing fetched at run time. A scan runs in a
+background thread; the page shows its stage, page-by-page progress and elapsed time, and can pause or cancel it
+(a cancelled scan's files are deleted). Uploads, extracted text and reports are deleted when the server stops.
+
+| Category | Mode | Steps |
+|---|---|---|
+| Workspace | New scan | Sources, Detection policy, Run (uploads or synthetic samples) |
+| Analytics | Overview | Summary, Files, Pipeline |
+| | Exposure & risk | Ranking, Page heatmap, Residual risk |
+| | Findings | Breakdown, Register, In context, Dropped candidates |
+| Documents | Extraction | Preview (PDF page with PII boxed), Structure, Span map, Images |
+| | Redaction | LLM text, Token map, Leak gate |
+| Assurance | Evaluation | Gold labels, Scores, Errors, Structure retention |
+| | Reports | Shareable, Sensitive, Session |
+
+**Developing the UI.** Run `python app.py --no-browser` and `npm run dev` in `web/` for hot reload on
+<http://localhost:5173>; it forwards `/api` to the Python server. Charts are plain HTML/SVG
+(`web/src/components/charts.tsx`).
+
+## Command line
+
+```powershell
+python -m optiv_pii_shield run path\to\*.pdf path\to\*.docx --out out
+python -m optiv_pii_shield run samples\synthetic\* --out out --gold samples\synthetic\gold_labels.csv
+python -m optiv_pii_shield gold-template path\to\files\* --out gold_draft.csv   # bootstrap gold labels, then correct by hand
+python -m optiv_pii_shield vault-open                                           # decrypt the token vault
+```
+
+## Python API
+
+```python
+from optiv_pii_shield import run, Settings
+
+res = run(["policy.pdf"], Settings(), out_dir="out")
+res.redacted["policy.pdf"]   # LLM-safe Markdown
+res.findings["policy.pdf"]   # findings with location, category, token, score, layer, reasons
+```
