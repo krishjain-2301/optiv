@@ -123,3 +123,27 @@ cleared. The **leak gate** then checks that no vault value survives in any outpu
 
 Exposure register (CSV/XLSX), exposure score and residual risk, audit log, and an encrypted token vault.
 With gold labels, recall, precision and leaks are reported per category and per source type.
+
+## Configuration
+
+**Organisation vocabulary.** Allow-listed product and team names, always-redact names and internal ID formats
+(such as `EMP-40718` or `MER-IN-0042`) live in `optiv_pii_shield/data/org.yaml`. Point `PII_SHIELD_ORG_CONFIG`
+at another file for another client.
+
+**OCR.** RapidOCR (PP-OCR on ONNX Runtime) installs with pip and needs no system binary. Two settings were
+chosen from measurements on real scans:
+
+- the **English** recognition model, because the bundled Chinese model drops spaces between English words and
+  breaks name and label detection;
+- the angle classifier **off**, because it flipped long lines on upright scans and silently lost sentences.
+
+Masks use the recogniser's per-character positions and are padded, so they err towards covering a neighbouring
+character rather than exposing one. Tesseract works with `--ocr tesseract` if `pytesseract` and the binary are
+installed.
+
+**GLiNER-PII (optional).** `pip install gliner`, then `python scripts/fetch_models.py --gliner` (caches about
+1.8 GB once), then pass `--gliner` or use the dashboard toggle. Runs load weights from the cache only. GLiNER
+hits must look like a value of their category before they count, because it also tags labels such as "E-mail"
+in a table header.
+
+**Vault key.** Set `PII_SHIELD_VAULT_KEY` (CLI) or a passphrase in the UI to write the encrypted token vault.
