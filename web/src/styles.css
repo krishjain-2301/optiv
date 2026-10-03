@@ -36,14 +36,18 @@ code { font-family: var(--mono); font-size: 0.85em; }
 
 /* ------------------------------------------------------------------------------ layout */
 .shell { display: grid; grid-template-columns: 17rem 1fr; min-height: 100%; }
-.sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: var(--sidebar);
+.sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: linear-gradient(180deg, #101624, var(--sidebar) 40%);
   border-right: 1px solid var(--border); padding: 1.1rem 1rem 1.2rem; display: flex; flex-direction: column; gap: 0.6rem; }
-.brand { display: flex; align-items: center; gap: 0.6rem; font-size: 1.15rem; font-weight: 650; padding: 0.2rem 0.4rem 0.8rem; }
+.brand { display: flex; align-items: center; gap: 0.65rem; font-size: 1.2rem; font-weight: 700; letter-spacing: -0.01em; padding: 0.2rem 0.4rem 0.9rem;
+  border-bottom: 1px solid var(--border); margin-bottom: 0.2rem; }
+.brand img { filter: drop-shadow(0 0 10px rgb(57 135 229 / 0.55)); }
 .nav-section { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); margin: 0.9rem 0.6rem 0.35rem; }
-.nav-link { display: flex; align-items: center; gap: 0.65rem; padding: 0.45rem 0.6rem; border-radius: 0.5rem; color: var(--ink-2);
-  text-decoration: none; font-size: 0.93rem; }
+.nav-link { position: relative; display: flex; align-items: center; gap: 0.65rem; padding: 0.5rem 0.7rem; border-radius: 0.6rem; color: var(--ink-2);
+  text-decoration: none; font-size: 0.93rem; transition: background 0.15s, color 0.15s, transform 0.15s; }
+.nav-link:hover { transform: translateX(2px); }
 .nav-link:hover { color: var(--ink); background: var(--surface); }
-.nav-link.active { color: var(--ink); background: var(--surface-2); font-weight: 600; }
+.nav-link.active { color: var(--ink); background: linear-gradient(90deg, rgb(57 135 229 / 0.22), rgb(57 135 229 / 0.04)); font-weight: 600; }
+.nav-link.active::before { content: ""; position: absolute; left: -1rem; top: 20%; bottom: 20%; width: 3px; border-radius: 0 3px 3px 0; background: var(--accent); }
 .nav-link.active svg { color: var(--accent); }
 .side-card { margin-top: auto; border: 1px solid var(--border); border-radius: 0.6rem; padding: 0.7rem 0.8rem; background: var(--surface);
   font-size: 0.8rem; color: var(--ink-2); text-decoration: none; display: block; }
