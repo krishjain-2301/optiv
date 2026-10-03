@@ -249,3 +249,67 @@ explicit allow-list of the shareable files below and never includes them.
   packages included, is searched; if a needle survives anywhere the masked file is **not written** and the run
   reports the file as withheld. Single-word person hits in the review band are not used as needles (a lone
   "Cloud" flagged by NER must not erase every "cloud"); single-word names match only as written or in capitals.
+
+## Measuring quality
+
+Recall is only reported against gold labels. Format (one row per PII instance):
+
+```csv
+file,page,text,category,context_type,note
+risk_policy.pdf,3,Priya Raman,PERSON,narrative,
+org_pack.pptx,1,+1 (555) 0114,PHONE_NUMBER,table,
+```
+
+`context_type` ∈ `native | labelled | table | narrative | image | metadata` drives the per-source breakdown
+(Appendix E.6 prompts 2 and 3). Structure retention is computed from the raw OOXML for DOCX/PPTX, and against an
+optional hand transcription (`--transcriptions dir/` with `<stem>.txt`) for OCR'd PDFs.
+
+## Synthetic fixtures
+
+`python scripts/make_samples.py samples/synthetic` builds a scanned PDF, a DOCX and a PPTX with invented people
+that reproduce the traps found in the real samples (no text layer, ruled tables with multi-line cells,
+screenshot text, unlabelled narrative with possessives and surname-only mentions, `.example` e-mails, `+1 (555) 0114`
+phones, glued DOCX cells, field names that look like names, author metadata) and writes `gold_labels.csv`.
+
+## Tests
+
+```powershell
+pytest -q
+```
+
+Unit tests cover validators, rules, name handling and structure; integration tests run the full pipeline on the
+synthetic fixtures and check recall/precision floors, leaks in the redacted text and masked files, token stability,
+traceability of every finding, structure retention and report outputs. `tests/test_leaks.py` plants values in
+hidden places (mailto targets, field codes, tracked deletions, description, alt text, PNG metadata, chart caches,
+embedded workbooks, thumbnails) and searches every part of the masked files for them.
+
+### Held-out set
+
+The fixture scores (recall 1.000, precision 0.987 on 76 labels) are optimistic: the fixtures were written
+alongside the detectors. `scripts/make_heldout.py` generates a separate set with Faker (en_IN, pl_PL, de_DE,
+es_ES, en_GB, en_US), with ALL-CAPS, lowercase and OCR-noise variants, sentences with and without keywords, and
+decoy paragraphs. Leaks are counted strictly on the LLM text (a surname left beside a token is a leak). Seed
+`dev` is used for fixing general failure classes; seed `test` is reported (`tests/test_heldout.py`).
+
+Test seed, 219 instances (`en_core_web_lg`):
+
+| | caught |
+|---|---|
+| Phones, e-mails, IPs, IBANs, cards, SSN, Aadhaar | 104/104 |
+| Person names, all variants | 90/115 |
+| ... Title case | 58/60 |
+| ... ALL CAPS | 20/23 |
+| ... OCR noise (1–2 digit-for-letter swaps) | 9/15 |
+| ... lowercase | 3/17 |
+| Decoy paragraphs (false positives) | 0 tokens in 20 |
+
+The test seed was inspected once, before one fix: a labelled Aadhaar starting with `1` leaked and the Aadhaar
+rule was widened (labelled → review band). Treat the Aadhaar line as no longer held out.
+
+**Known limits.** Names leak when no layer has evidence: lowercase names whose given name is not in
+`optiv_pii_shield/data/given_names.txt`, Title-case non-English names that spaCy's English model does not tag and
+that no keyword, header or confirmed mention supports, and names garbled by OCR beyond one or two digit
+confusions. GLiNER (`--gliner`, `knowledgator/gliner-pii-base-v1.0`, gliner 0.2.29) was measured once on the test
+seed on 2026-10-03: person names 93/115 instead of 90/115 (lowercase unchanged), structured identifiers still
+104/104, but 8 tokens in the 20 decoy paragraphs instead of 0, and detection about 10x slower on CPU. It is a
+small recall gain bought with false positives, so it stays off by default.
