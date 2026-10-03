@@ -1,115 +1,201 @@
+<div align="center">
+
+<img src="web/public/shield.svg" alt="PII Shield logo" width="72" />
+
 # PII Shield
 
-Offline, fail-closed PII detection and redaction for text artifacts (PDF, including scanned; DOCX; PPTX; XLSX;
-images).
+**Offline, fail-closed PII detection and redaction for PDFs, Office files and images.**
+
+Hand documents to an LLM without handing over the people inside them.
+
+![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776ab?logo=python&logoColor=white)
+![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
+![React](https://img.shields.io/badge/dashboard-React%20%2B%20Vite-61dafb?logo=react&logoColor=black)
+![Offline](https://img.shields.io/badge/runs-100%25%20offline-2ea44f)
+![Fail-closed](https://img.shields.io/badge/design-fail--closed-d03b3b)
+
+[Quick start](#quick-start) · [How it works](#how-it-works) · [Dashboard](#dashboard) · [CLI](#command-line) · [Python API](#python-api) · [Quality](#measuring-quality) · [Layout](#project-layout)
+
+</div>
+
+---
+
+## Why PII Shield
+
+Sending contracts, scans and spreadsheets to a cloud LLM leaks names, IDs, e-mails and credentials. PII Shield
+sits in front of the model: it finds personal data locally, replaces it with stable tokens, and proves nothing
+slipped through before anything is written to disk.
+
+- **Nothing leaves the machine.** No cloud OCR, no cloud PII API, and no LLM is used to *find* PII.
+- **Fail-closed.** Unparseable files produce no output. Uncertain findings are redacted and queued for review.
+  A leak gate refuses to write any masked file that still contains an original value.
+- **Many formats.** PDF (text layer and scanned), DOCX, PPTX, XLSX and images, including hidden content such as
+  comments, speaker notes, alt text, document properties, hidden sheets and tracked changes.
+- **Consistent tokens.** `Priya Raman` becomes `[PERSON_007]` in every file of the run, so the LLM can still
+  reason about who is who.
+- **Auditable and measurable.** Every decision is logged, risk is scored per file, and recall, precision and
+  leaks are computed against gold labels.
+
+## Features at a glance
+
+| | |
+|---|---|
+| **Extract** | Layout-aware OCR, ruled tables read cell by cell, OOXML walkers for Office files, span map back to page, element and bounding box |
+| **Detect** | Rules and checksums, spaCy NER (optional GLiNER-PII), structural cues, whole-run name propagation, low-confidence OCR guard |
+| **Redact** | LLM-ready Markdown, masked PDF/DOCX/PPTX/XLSX with layout preserved, metadata cleared, leak gate |
+| **Report** | Exposure register (CSV/XLSX), exposure score and residual risk, audit log, AES-256-GCM token vault |
+| **Measure** | Recall / precision / leaks per category and per source type, structure retention |
+| **Explore** | Local React dashboard with scan control, heatmaps, findings in context, and evaluation views |
+
 Built for the Optiv VIT case study (Case Study 2). The design rationale is in
 [`01-landscape-and-recommendation.md`](01-landscape-and-recommendation.md) (Option C).
 
-**Nothing leaves the machine.** No cloud OCR, no cloud PII API, no LLM is used to *find* PII. The output is text
-that is safe to hand to an LLM, plus masked copies of the originals and a full audit trail.
+## Quick start
 
-```
-Upload ─► sniff type (magic bytes)
-       ─► EXTRACT  PDF text layer | layout-aware OCR (ruled tables cell-by-cell, screenshots re-read at 2x)
-                   DOCX/PPTX OOXML walk: body, tables, text boxes, groups, headers/footers, notes, comments,
-                   document properties, customXml, comment/tracked-change authors, embedded images (OCR),
-                   alt text, charts, SmartArt, link targets, field codes
-                   XLSX: every sheet (hidden too), cells under column headers, formulas, comments, properties
-                   → span map: file · page/slide · element · table cell + column header · bbox · OCR confidence
-       ─► DETECT   L1 rules + checksums + context words   (inside Presidio)
-                   L2 NER: spaCy, optional GLiNER-PII      (inside Presidio)
-                   L3 structure: column headers, "Label:" fields, document properties
-                   L4 propagation: every confirmed person searched across all files (surname, initial, possessive)
-                   L0 fail-closed: identifier-like OCR words below the confidence floor
-                   Resolver: trim/allow-list, merge overlaps, agreement bonus, route redact / review / drop
-       ─► REDACT   stable tokens [PERSON_007] [EMAIL_007] across files · redacted Markdown for the LLM
-                   masked PDF/DOCX/PPTX/XLSX (layout and page count kept, author metadata cleared)
-                   LEAK GATE: no vault value may survive in any output, or the file is not written
-       ─► REPORT   exposure register (CSV/XLSX) · exposure score + residual risk · audit log · encrypted vault
-       ─► MEASURE  recall / precision / leaks vs gold labels, per category and per source type
-```
-
-## Setup
+Requires Python 3.11+ and, for the dashboard, Node 20+.
 
 ```powershell
+git clone https://github.com/krishjain-2301/optiv.git
+cd optiv
+
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -r requirements.txt             # exact pins, includes the en_core_web_lg model wheel
-python scripts/fetch_models.py              # English OCR model, ~9 MB, one-time (weights only)
+pip install -r requirements.txt        # exact pins, includes the en_core_web_lg model wheel
+python scripts/fetch_models.py         # English OCR model, ~9 MB, one-time (weights only)
+
+cd web; npm install; npm run build; cd ..
+python app.py                          # http://127.0.0.1:8000, opens the browser
 ```
 
-Missing models are errors, not fallbacks: if the configured spaCy model (`--spacy-model`, default
-`en_core_web_lg`), the English OCR model or (when asked for) GLiNER is not installed, the run stops before any
-file is read. Rules-only runs must be asked for explicitly (`Settings(use_spacy=False)`).
+On macOS or Linux activate the environment with `source .venv/bin/activate`.
 
-Organisation-specific vocabulary (allow-list of product/team names, always-redact names, internal ID formats
-such as `EMP-40718` / `MER-IN-0042`) lives in `optiv_pii_shield/data/org.yaml`; point `PII_SHIELD_ORG_CONFIG` at
-another file for another client. CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned
-dependencies.
+Prefer the terminal? Skip the `web/` step and run
+`python -m optiv_pii_shield run path/to/*.pdf --out out` ([details](#command-line)).
 
-OCR uses RapidOCR (PP-OCR models on ONNX Runtime), which installs with pip and needs no system binary.
-Two settings matter and were chosen from measurements on the scans: the **English** recognition model
-(the bundled Chinese model drops the spaces between English words, which breaks name and label detection)
-and the angle classifier **off** (it flipped long lines on upright scans, silently losing whole sentences).
-Masks use the recogniser's per-character positions and are padded, so they err towards covering a
-neighbouring character rather than exposing one.
-Tesseract is supported with `--ocr tesseract` if `pytesseract` and the binary are installed.
-GLiNER-PII is optional: `pip install gliner`, `python scripts/fetch_models.py --gliner` (caches the weights once,
-about 1.8 GB), then `--gliner` or the dashboard toggle. Runs load the weights from the cache only. GLiNER hits
-must look like a value of their category before they count: it also tags labels ("E-mail" in a table header).
+> **Missing models are errors, not fallbacks.** If the spaCy model (`--spacy-model`, default `en_core_web_lg`),
+> the English OCR model or (when requested) GLiNER is not installed, the run stops before any file is read.
+> Rules-only runs must be asked for explicitly with `Settings(use_spacy=False)`.
 
-## Use
+## How it works
 
-**Dashboard**
+```mermaid
+flowchart LR
+    A[Upload] --> B[Sniff type<br/>magic bytes]
+    B --> C[EXTRACT<br/>text, OCR, OOXML]
+    C --> D[DETECT<br/>L0 to L4 + resolver]
+    D --> E[REDACT<br/>tokens, Markdown, masked files]
+    E --> G{Leak gate}
+    G -- clean --> F[REPORT<br/>register, score, audit log, vault]
+    G -- value found --> X[File withheld]
+    F --> H[MEASURE<br/>recall, precision, leaks]
+```
+
+### 1. Extract
+
+| Source | What is read |
+|---|---|
+| PDF | Text layer, or layout-aware OCR for scans: ruled tables cell by cell, screenshots re-read at 2x |
+| DOCX / PPTX | Body, tables, text boxes, groups, headers/footers, notes, comments, document properties, customXml, comment and tracked-change authors, embedded images (OCR), alt text, charts, SmartArt, link targets, field codes |
+| XLSX | Every sheet (hidden too), cells under their column headers, formulas, comments, properties |
+| Images | OCR with per-character positions |
+
+Everything lands in a **span map**: file, page or slide, element, table cell and column header, bounding box,
+OCR confidence.
+
+### 2. Detect
+
+| Layer | Method |
+|---|---|
+| **L1** Rules | Patterns, checksums and context words (inside Presidio) |
+| **L2** NER | spaCy, optional GLiNER-PII (inside Presidio) |
+| **L3** Structure | Column headers, `Label:` fields, document properties |
+| **L4** Propagation | Every confirmed person is searched across all files: surname, initial, possessive |
+| **L0** Fail-closed | Identifier-like OCR words below the confidence floor |
+| **Resolver** | Trim and allow-list, merge overlaps, agreement bonus, route to redact / review / drop |
+
+### 3. Redact
+
+Stable tokens such as `[PERSON_007]` and `[EMAIL_007]` are shared across files. The pipeline writes redacted
+Markdown for the LLM and masked PDF/DOCX/PPTX/XLSX copies with layout and page count kept and author metadata
+cleared. The **leak gate** then checks that no vault value survives in any output, or the file is not written.
+
+### 4. Report and measure
+
+Exposure register (CSV/XLSX), exposure score and residual risk, audit log, and an encrypted token vault.
+With gold labels, recall, precision and leaks are reported per category and per source type.
+
+## Configuration
+
+**Organisation vocabulary.** Allow-listed product and team names, always-redact names and internal ID formats
+(such as `EMP-40718` or `MER-IN-0042`) live in `optiv_pii_shield/data/org.yaml`. Point `PII_SHIELD_ORG_CONFIG`
+at another file for another client.
+
+**OCR.** RapidOCR (PP-OCR on ONNX Runtime) installs with pip and needs no system binary. Two settings were
+chosen from measurements on real scans:
+
+- the **English** recognition model, because the bundled Chinese model drops spaces between English words and
+  breaks name and label detection;
+- the angle classifier **off**, because it flipped long lines on upright scans and silently lost sentences.
+
+Masks use the recogniser's per-character positions and are padded, so they err towards covering a neighbouring
+character rather than exposing one. Tesseract works with `--ocr tesseract` if `pytesseract` and the binary are
+installed.
+
+**GLiNER-PII (optional).** `pip install gliner`, then `python scripts/fetch_models.py --gliner` (caches about
+1.8 GB once), then pass `--gliner` or use the dashboard toggle. Runs load weights from the cache only. GLiNER
+hits must look like a value of their category before they count, because it also tags labels such as "E-mail"
+in a table header.
+
+**Vault key.** Set `PII_SHIELD_VAULT_KEY` (CLI) or a passphrase in the UI to write the encrypted token vault.
+
+## Dashboard
 
 ```powershell
-cd web; npm install; npm run build; cd ..   # once, and after changing web/ (needs Node 20+)
+cd web; npm install; npm run build; cd ..   # once, and after changing web/
 python app.py                               # http://127.0.0.1:8000, opens the browser
 ```
 
-A FastAPI server (`server/`) on 127.0.0.1 runs the pipeline and hosts a React dashboard (`web/`). Everything the
-page needs is bundled by the build: no CDN, no web fonts, nothing fetched at run time. A scan runs in a background
-thread on the server; the page shows its stage, page-by-page progress and elapsed time, and can pause or cancel
-it (a cancelled scan's files are deleted). The run is sent to the browser once, so pages, steps and filters
-respond without another request. Uploads, extracted text and reports are deleted when the server stops.
-
-The sidebar lists the modes by category, and each mode lays its own steps out left to right.
+A FastAPI server (`server/`) on `127.0.0.1` runs the pipeline and hosts a React dashboard (`web/`). Everything
+the page needs is bundled by the build: no CDN, no web fonts, nothing fetched at run time. A scan runs in a
+background thread; the page shows its stage, page-by-page progress and elapsed time, and can pause or cancel it
+(a cancelled scan's files are deleted). Uploads, extracted text and reports are deleted when the server stops.
 
 | Category | Mode | Steps |
 |---|---|---|
-| Workspace | New scan | Sources → Detection policy → Run (uploads, or synthetic samples) |
-| Analytics | Overview | Summary → Files → Pipeline |
-| | Exposure & risk | Ranking → Page heatmap → Residual risk |
-| | Findings | Breakdown → Register → In context → Dropped candidates (one filter row scopes all four) |
-| Documents | Extraction | Preview (PDF page with PII boxed) → Structure → Span map → Images |
-| | Redaction | LLM text → Token map → Leak gate |
-| Assurance | Evaluation | Gold labels → Scores → Errors → Structure retention |
-| | Reports | Shareable → Sensitive → Session |
+| Workspace | New scan | Sources, Detection policy, Run (uploads or synthetic samples) |
+| Analytics | Overview | Summary, Files, Pipeline |
+| | Exposure & risk | Ranking, Page heatmap, Residual risk |
+| | Findings | Breakdown, Register, In context, Dropped candidates |
+| Documents | Extraction | Preview (PDF page with PII boxed), Structure, Span map, Images |
+| | Redaction | LLM text, Token map, Leak gate |
+| Assurance | Evaluation | Gold labels, Scores, Errors, Structure retention |
+| | Reports | Shareable, Sensitive, Session |
 
-While developing the dashboard, `python app.py --no-browser` plus `npm run dev` in `web/` gives hot reload on
-http://localhost:5173 (it forwards `/api` to the Python server). Charts are plain HTML/SVG (`web/src/components/charts.tsx`).
+**Developing the UI.** Run `python app.py --no-browser` and `npm run dev` in `web/` for hot reload on
+<http://localhost:5173>; it forwards `/api` to the Python server. Charts are plain HTML/SVG
+(`web/src/components/charts.tsx`).
 
-**CLI**
+## Command line
 
 ```powershell
 python -m optiv_pii_shield run path\to\*.pdf path\to\*.docx --out out
 python -m optiv_pii_shield run samples\synthetic\* --out out --gold samples\synthetic\gold_labels.csv
 python -m optiv_pii_shield gold-template path\to\files\* --out gold_draft.csv   # bootstrap gold labels, then correct by hand
+python -m optiv_pii_shield vault-open                                           # decrypt the token vault
 ```
 
-**Python**
+## Python API
 
 ```python
 from optiv_pii_shield import run, Settings
+
 res = run(["policy.pdf"], Settings(), out_dir="out")
-res.redacted["policy.pdf"]        # LLM-safe Markdown
-res.findings["policy.pdf"]        # findings with location, category, token, score, layer, reasons
+res.redacted["policy.pdf"]   # LLM-safe Markdown
+res.findings["policy.pdf"]   # findings with location, category, token, score, layer, reasons
 ```
 
 ## Outputs (per run)
 
-| File | Contents | Sensitive? |
-|---|---|---|
 `<name>` keeps the extension (`report.docx.redacted.md`), so files that share a stem never overwrite each other.
 Everything with `SENSITIVE` in its name holds original values; the UI's "download all" zip is built from an
 explicit allow-list of the shareable files below and never includes them.
@@ -178,7 +264,7 @@ org_pack.pptx,1,+1 (555) 0114,PHONE_NUMBER,table,
 (Appendix E.6 prompts 2 and 3). Structure retention is computed from the raw OOXML for DOCX/PPTX, and against an
 optional hand transcription (`--transcriptions dir/` with `<stem>.txt`) for OCR'd PDFs.
 
-## Synthetic fixtures
+### Synthetic fixtures
 
 `python scripts/make_samples.py samples/synthetic` builds a scanned PDF, a DOCX and a PPTX with invented people
 that reproduce the traps found in the real samples (no text layer, ruled tables with multi-line cells,
@@ -196,6 +282,8 @@ synthetic fixtures and check recall/precision floors, leaks in the redacted text
 traceability of every finding, structure retention and report outputs. `tests/test_leaks.py` plants values in
 hidden places (mailto targets, field codes, tracked deletions, description, alt text, PNG metadata, chart caches,
 embedded workbooks, thumbnails) and searches every part of the masked files for them.
+
+CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned dependencies.
 
 ### Held-out set
 
@@ -228,7 +316,7 @@ seed on 2026-10-03: person names 93/115 instead of 90/115 (lowercase unchanged),
 104/104, but 8 tokens in the 20 decoy paragraphs instead of 0, and detection about 10x slower on CPU. It is a
 small recall gain bought with false positives, so it stays off by default.
 
-## Layout
+## Project layout
 
 ```
 optiv_pii_shield/
@@ -259,3 +347,11 @@ web/                   React + TypeScript dashboard (Vite)
 scripts/make_samples.py
 tests/
 ```
+
+## Contributing
+
+1. Branch from `main`, keep commits small and focused.
+2. Run `pytest -q` and `cd web && npm run typecheck` before pushing.
+3. Open a pull request describing what changed and why.
+
+Never commit real documents or real PII; use the synthetic fixtures.
