@@ -65,7 +65,7 @@ code { font-family: var(--mono); font-size: 0.85em; }
 .page-head p { margin: 0.15rem 0 0; color: var(--ink-2); }
 .eyebrow { font-size: 0.68rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); }
 .chips { display: flex; gap: 0.4rem; flex-wrap: wrap; }
-.chip { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.6rem; border-radius: 999px; border: 1px solid var(--border);
+.chip { backdrop-filter: blur(6px); display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.15rem 0.6rem; border-radius: 999px; border: 1px solid var(--border);
   background: var(--surface); color: var(--ink-2); font-size: 0.78rem; white-space: nowrap; text-transform: none; }
 .chip b { color: var(--ink); font-weight: 600; }
 .dot { width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--none); flex: none; display: inline-block; }
@@ -194,7 +194,7 @@ code { font-family: var(--mono); font-size: 0.85em; }
 
 /* ----------------------------------------------------------------------------- tables */
 .table-wrap { display: flex; flex-direction: column; gap: 0.5rem; min-width: 0; }
-.table-scroll { overflow: auto; max-height: 34rem; border: 1px solid var(--border); border-radius: 0.5rem; }
+.table-scroll { overflow: auto; max-height: 34rem; border: 1px solid var(--border); border-radius: 0.7rem; }
 table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
 thead th { position: sticky; top: 0; z-index: 1; background: #182030; text-align: left; font-weight: 550; color: var(--ink-2);
   border-bottom: 1px solid var(--border); padding: 0; white-space: nowrap; }
@@ -205,7 +205,8 @@ td { padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--border); max-width:
   text-overflow: ellipsis; vertical-align: top; }
 td.wrap { white-space: normal; overflow-wrap: anywhere; color: var(--ink-2); }
 td.right, th.right { text-align: right; font-variant-numeric: tabular-nums; }
-tbody tr:hover td { background: #171d28; }
+tbody tr:hover td { background: #1a2231; }
+tbody tr:nth-child(even) td { background: rgb(255 255 255 / 0.012); }
 tbody tr:last-child td { border-bottom: 0; }
 .pager { display: flex; align-items: center; justify-content: flex-end; gap: 0.4rem; font-size: 0.8rem; color: var(--ink-3); }
 
@@ -234,6 +235,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .select span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select .placeholder { color: var(--ink-3); }
 .select:hover, .input:hover { border-color: var(--axis); }
+.select:focus-visible, .input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgb(57 135 229 / 0.25); }
 textarea.input { resize: vertical; font-family: var(--font); }
 .menu { position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20; background: #1d2535; border: 1px solid #344158;
   border-radius: 0.5rem; padding: 0.3rem; max-height: 18rem; overflow-y: auto; box-shadow: 0 10px 28px rgb(0 0 0 / 0.45); }
