@@ -355,3 +355,11 @@ web/                   React + TypeScript dashboard (Vite)
 scripts/make_samples.py
 tests/
 ```
+
+## Contributing
+
+1. Branch from `main`, keep commits small and focused.
+2. Run `pytest -q` and `cd web && npm run typecheck` before pushing.
+3. Open a pull request describing what changed and why.
+
+Never commit real documents or real PII; use the synthetic fixtures.
