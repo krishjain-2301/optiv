@@ -264,7 +264,7 @@ org_pack.pptx,1,+1 (555) 0114,PHONE_NUMBER,table,
 (Appendix E.6 prompts 2 and 3). Structure retention is computed from the raw OOXML for DOCX/PPTX, and against an
 optional hand transcription (`--transcriptions dir/` with `<stem>.txt`) for OCR'd PDFs.
 
-## Synthetic fixtures
+### Synthetic fixtures
 
 `python scripts/make_samples.py samples/synthetic` builds a scanned PDF, a DOCX and a PPTX with invented people
 that reproduce the traps found in the real samples (no text layer, ruled tables with multi-line cells,
@@ -282,6 +282,8 @@ synthetic fixtures and check recall/precision floors, leaks in the redacted text
 traceability of every finding, structure retention and report outputs. `tests/test_leaks.py` plants values in
 hidden places (mailto targets, field codes, tracked deletions, description, alt text, PNG metadata, chart caches,
 embedded workbooks, thumbnails) and searches every part of the masked files for them.
+
+CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned dependencies.
 
 ### Held-out set
 
@@ -313,16 +315,6 @@ confusions. GLiNER (`--gliner`, `knowledgator/gliner-pii-base-v1.0`, gliner 0.2.
 seed on 2026-10-03: person names 93/115 instead of 90/115 (lowercase unchanged), structured identifiers still
 104/104, but 8 tokens in the 20 decoy paragraphs instead of 0, and detection about 10x slower on CPU. It is a
 small recall gain bought with false positives, so it stays off by default.
-
-## Tests
-
-```powershell
-pytest -q
-```
-
-CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned dependencies. Synthetic fixtures
-come from `python scripts/make_samples.py samples/synthetic`: a scanned PDF, a DOCX and a PPTX with invented
-people that reproduce the traps found in real samples, plus `gold_labels.csv`.
 
 ## Project layout
 
