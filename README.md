@@ -193,3 +193,21 @@ res = run(["policy.pdf"], Settings(), out_dir="out")
 res.redacted["policy.pdf"]   # LLM-safe Markdown
 res.findings["policy.pdf"]   # findings with location, category, token, score, layer, reasons
 ```
+
+## Outputs (per run)
+
+`<name>` keeps the extension (`report.docx.redacted.md`), so files that share a stem never overwrite each other.
+Everything with `SENSITIVE` in its name holds original values; the UI's "download all" zip is built from an
+explicit allow-list of the shareable files below and never includes them.
+
+| File | Contents | Sensitive? |
+|---|---|---|
+| `<name>.extracted.SENSITIVE.md` | Faithful Markdown of the source (headings, tables, image text) | **yes** |
+| `<name>.redacted.md` | Same structure with PII replaced by tokens: **what goes to the LLM** | no |
+| `<name>.masked.<ext>` | Masked copy of the original, same page count/layout, metadata cleared; written only if it passes the leak gate | no |
+| `pii_exposure_register.csv/.xlsx` | Every finding: file, page, location, source type, category, value (partially masked), token, score, layer, reasons | no |
+| `pii_exposure_register.SENSITIVE.csv` | The same with full original values | **yes** |
+| `summary.json` | Per-file counts: OCR pages, images and their status, categories, image-only identifiers, warnings | no |
+| `audit_log.jsonl` | Every decision including dropped candidates, values partially masked | no |
+| `token_vault.SENSITIVE.enc.json` | Token → original value, AES-256-GCM encrypted; written only when `PII_SHIELD_VAULT_KEY` (CLI) or the UI passphrase is set. Open with `python -m optiv_pii_shield vault-open` | **yes** |
+| `evaluation.json` | With `--gold`: recall, precision, leaks, per-category/source breakdown, structure retention | no |
