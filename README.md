@@ -313,3 +313,13 @@ confusions. GLiNER (`--gliner`, `knowledgator/gliner-pii-base-v1.0`, gliner 0.2.
 seed on 2026-10-03: person names 93/115 instead of 90/115 (lowercase unchanged), structured identifiers still
 104/104, but 8 tokens in the 20 decoy paragraphs instead of 0, and detection about 10x slower on CPU. It is a
 small recall gain bought with false positives, so it stays off by default.
+
+## Tests
+
+```powershell
+pytest -q
+```
+
+CI (`.github/workflows/ci.yml`) runs the full suite on Windows with the pinned dependencies. Synthetic fixtures
+come from `python scripts/make_samples.py samples/synthetic`: a scanned PDF, a DOCX and a PPTX with invented
+people that reproduce the traps found in real samples, plus `gold_labels.csv`.
