@@ -227,3 +227,25 @@ explicit allow-list of the shareable files below and never includes them.
   `estimated_missed` (found × miss rate from the held-out set; an estimate, with its basis recorded).
 
 `exposure_ranking` lists files by density, so the riskiest artifacts are reviewed first.
+
+## Fail-closed behaviour
+
+- A file that cannot be parsed is reported and produces no output (never passed through).
+- Review-band findings (`0.35 ≤ score < 0.60` by default) are **redacted** and queued for review.
+- OCR words below the confidence floor that contain digits or `@` are masked as `[UNREADABLE_…]`.
+- Text from images that were OCR'd with low confidence is withheld from the LLM text entirely; images that
+  cannot be read at all (EMF/WMF) are removed from the masked copies. Scanned-page image regions without
+  readable text (photos, badges) are blanked in the masked PDF.
+- Checksums only raise or lower confidence: test-range values (SSN `9xx`, `555` phones, Aadhaar starting 0/1)
+  next to a label are kept.
+- Masked DOCX/PPTX lose what a reader cannot see but a parser can: tracked-change deletions, embedded objects and
+  chart workbooks (charts render from their redacted caches), the thumbnail, image EXIF/XMP/text chunks. Alt text,
+  chart labels, SmartArt, slide comments, link targets (`mailto:`), field codes and free-text document properties
+  are extracted and redacted like body text. Masked PDFs lose annotations, form fields, attachments and mailto links.
+- **Leak gate.** After tokens are assigned, every original value in the vault becomes a needle (as written,
+  XML-escaped, URL-encoded, split across runs, digits-only for long numbers). The LLM text is scrubbed of any
+  needle still present (reported as a warning: detection missed a mention). Each masked file is scrubbed in the
+  safe places (element text, alt text, author attributes, external link targets), then every member, nested
+  packages included, is searched; if a needle survives anywhere the masked file is **not written** and the run
+  reports the file as withheld. Single-word person hits in the review band are not used as needles (a lone
+  "Cloud" flagged by NER must not erase every "cloud"); single-word names match only as written or in capitals.
