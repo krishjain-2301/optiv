@@ -49,3 +49,29 @@ slipped through before anything is written to disk.
 
 Built for the Optiv VIT case study (Case Study 2). The design rationale is in
 [`01-landscape-and-recommendation.md`](01-landscape-and-recommendation.md) (Option C).
+
+## Quick start
+
+Requires Python 3.11+ and, for the dashboard, Node 20+.
+
+```powershell
+git clone https://github.com/krishjain-2301/optiv.git
+cd optiv
+
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt        # exact pins, includes the en_core_web_lg model wheel
+python scripts/fetch_models.py         # English OCR model, ~9 MB, one-time (weights only)
+
+cd web; npm install; npm run build; cd ..
+python app.py                          # http://127.0.0.1:8000, opens the browser
+```
+
+On macOS or Linux activate the environment with `source .venv/bin/activate`.
+
+Prefer the terminal? Skip the `web/` step and run
+`python -m optiv_pii_shield run path/to/*.pdf --out out` ([details](#command-line)).
+
+> **Missing models are errors, not fallbacks.** If the spaCy model (`--spacy-model`, default `en_core_web_lg`),
+> the English OCR model or (when requested) GLiNER is not installed, the run stops before any file is read.
+> Rules-only runs must be asked for explicitly with `Settings(use_spacy=False)`.
