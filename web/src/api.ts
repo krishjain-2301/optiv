@@ -16,6 +16,8 @@ export interface Finding {
   decision: Decision;
   layer: string;
   recognizer: string;
+  /** approved | rejected | added: what a reviewer decided; empty when nobody has */
+  review: string;
   reasons: string[];
 }
 
@@ -60,6 +62,48 @@ export interface FileSummary {
   warnings: string[];
   exposure: Exposure;
   extract_seconds: number | null;
+  special_category: number;
+  visuals: Record<string, number>;
+  verification: Verification;
+  sha256: string;
+}
+
+export interface Verification {
+  method?: string;
+  pages?: number;
+  pictures?: number;
+  covered?: number;
+}
+
+export interface QueueRow {
+  entity_type: string;
+  value: string;
+  occurrences: number;
+  files: string[];
+  score: number;
+  layer: string;
+  location: string;
+  reasons: string[];
+}
+
+export interface ReviewEntry {
+  timestamp: string;
+  operator: string;
+  approved: number;
+  rejected: number;
+  added: number;
+}
+
+export interface ReviewDecision {
+  entity_type: string;
+  value: string;
+  action: "approve" | "reject";
+}
+
+export interface ReviewAddition {
+  text: string;
+  entity_type: string;
+  file: string | null;
 }
 
 export interface OutputFile {
@@ -73,6 +117,8 @@ export interface TokenRow {
   entity_type: string;
   occurrences: number;
   files: number;
+  /** carries a person's number: the same individual as that [PERSON_…] token */
+  linked: boolean;
 }
 
 export interface Run {
@@ -81,6 +127,13 @@ export interface Run {
   timings: Record<string, number>;
   errors: Record<string, string>;
   thresholds: { redact: number; review: number };
+  profile: { name: string; label: string };
+  operator: string;
+  keyed_tokens: boolean;
+  special_categories: string[];
+  review_queue: QueueRow[];
+  reviews: ReviewEntry[];
+  integrity: { ok: boolean; signed: boolean; problems: string[]; audit_records: number; public_key: string | null };
   has_gold: boolean;
   files: FileSummary[];
   findings: Finding[];
@@ -95,6 +148,12 @@ export interface Run {
     caught: number;
     masked_written: number;
     masked_withheld: number;
+    verified_pages: number;
+    verified_pictures: number;
+    verify_covered: number;
+    verify_on: boolean;
+    faces: number;
+    qr_codes: number;
     outputs: number;
   };
   outputs: { folder: string; vault: boolean; safe: OutputFile[]; sensitive: OutputFile[] };
@@ -137,6 +196,10 @@ export interface DocDetail {
   pages: number;
   ocr_pages: number[];
   previewable: boolean;
+  /** a masked copy of this PDF was written, so its pages can be shown beside the originals */
+  masked_preview: boolean;
+  visuals: { kind: string; page: number | null }[];
+  verification: Verification;
   markdown: string;
   redacted: string;
   structure: Record<string, unknown>;
@@ -198,6 +261,8 @@ export interface ScanStatus {
   stages: string[];
   elapsed: number;
   files: string[];
+  /** scan: a new run · review: the outputs written again after a reviewer's decisions */
+  kind: "scan" | "review";
 }
 
 export interface ScanSettings {
@@ -211,11 +276,37 @@ export interface ScanSettings {
   extra_allow_list: string[];
   deny_list: string[];
   vault_passphrase: string | null;
+  profile: string;
+  verify_outputs: boolean;
+  blank_textless_images: boolean;
+  detect_faces: boolean;
+  token_key: string | null;
+  operator: string | null;
+}
+
+export interface Profile {
+  name: string;
+  label: string;
+  actions: Record<string, string>;
+}
+
+/** What the server offers besides the defaults: profiles, categories, limits. */
+export interface Meta {
+  default_operator: string;
+  profiles: Profile[];
+  entities: string[];
+  max_upload_mb: number;
+}
+
+export interface Rehydrated {
+  text: string;
+  restored: string[];
+  unknown: string[];
 }
 
 export const IDLE: ScanStatus = {
   state: "idle", fraction: 0, message: "", error: null, pause_requested: false, cancel_requested: false,
-  stage: 0, stages: [], elapsed: 0, files: [],
+  stage: 0, stages: [], elapsed: 0, files: [], kind: "scan",
 };
 
 async function problem(r: Response): Promise<Error> {
@@ -235,14 +326,18 @@ async function get<T>(url: string): Promise<T> {
   return r.json();
 }
 
-async function post<T>(url: string, body?: FormData, method = "POST"): Promise<T> {
-  const r = await fetch(url, { method, body });
+async function post<T>(url: string, body?: FormData | object, method = "POST"): Promise<T> {
+  const json = body !== undefined && !(body instanceof FormData);
+  const r = await fetch(url, {
+    method, body: json ? JSON.stringify(body) : (body as FormData | undefined),
+    headers: json ? { "Content-Type": "application/json" } : undefined,
+  });
   if (!r.ok) throw await problem(r);
   return r.json();
 }
 
 export const api = {
-  defaults: () => get<ScanSettings>("/api/settings"),
+  meta: () => get<Meta>("/api/settings"),
   scan: async (): Promise<ScanStatus> => ({ ...IDLE, ...(await get<Partial<ScanStatus>>("/api/scan")) }),
   run: async (): Promise<Run | null> => {
     const r = await fetch("/api/run");
@@ -251,8 +346,9 @@ export const api = {
     return r.json();
   },
   doc: (file: string) => get<DocDetail>(`/api/run/doc?file=${encodeURIComponent(file)}`),
-  pageUrl: (file: string, page: number, runId: string) =>
-    `/api/run/page?file=${encodeURIComponent(file)}&page=${page}&run=${encodeURIComponent(runId)}`,
+  /** `version` changes whenever the outputs were rewritten, so the browser fetches the page again */
+  pageUrl: (file: string, page: number, version: string, masked = false) =>
+    `/api/run/page?file=${encodeURIComponent(file)}&page=${page}&masked=${masked}&v=${encodeURIComponent(version)}`,
   evaluation: () => get<Evaluation>("/api/run/evaluation"),
   outputUrl: (name: string) => `/api/run/output?name=${encodeURIComponent(name)}`,
   start: (settings: ScanSettings, files: File[] | null, gold: File | null) => {
@@ -270,6 +366,16 @@ export const api = {
     const form = new FormData();
     form.append("gold", gold);
     return post<Evaluation>("/api/run/gold", form);
+  },
+  review: (decisions: ReviewDecision[], additions: ReviewAddition[], operator: string | null) =>
+    post<ScanStatus>("/api/run/review", { decisions, additions, operator }),
+  rehydrate: (text: string, purpose: string, operator: string | null) =>
+    post<Rehydrated>("/api/run/rehydrate", { text, purpose, operator }),
+  uploadTranscription: (file: string, transcription: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("transcription", transcription);
+    return post<Evaluation>("/api/run/transcription", form);
   },
   deleteSession: () => post<{ state: string }>("/api/session", undefined, "DELETE"),
 };

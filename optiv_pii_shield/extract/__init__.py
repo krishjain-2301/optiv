@@ -4,7 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import Settings
-from ..models import Document, Span
+from ..models import Document
+from ..modelstore import sha256_file
 from ..render import render_markdown
 from .sniff import sniff
 
@@ -13,6 +14,7 @@ def extract(path: str | Path, settings: Settings | None = None, on_page=None) ->
     """``on_page(done, total)`` reports progress through a PDF's pages (other formats read at once)."""
     settings = settings or Settings()
     doc = _extract(Path(path), settings, on_page)
+    doc.sha256 = sha256_file(path)
     doc.markdown = render_markdown(doc)
     return doc
 
@@ -40,14 +42,13 @@ def _extract(path: Path, settings: Settings, on_page=None) -> Document:
         from .image import extract_image
 
         return extract_image(path, settings)
-    if ftype == "text":
-        text = path.read_text(encoding="utf-8", errors="replace")
-        doc = Document(file=path.name, path=str(path), file_type="text", pages=1)
-        for i, para in enumerate(p for p in text.split("\n\n") if p.strip()):
-            doc.spans.append(Span(id=f"{path.stem[:12]}-{i + 1:05d}", file=path.name, text=para, kind="paragraph",
-                                  page=1, location=f"paragraph {i + 1}", anchor=f"p[{i}]"))
-        doc.structure = {"paragraphs": len(doc.spans)}
-        return doc
+    if ftype in ("text", "csv", "eml"):
+        from . import plain
+
+        return {"text": plain.extract_text, "csv": plain.extract_csv, "eml": plain.extract_eml}[ftype](path, settings)
+    if ftype == "legacy":
+        raise ValueError(f"{path.name}: legacy Office / Outlook binary format (.doc, .xls, .ppt, .msg) is not read; "
+                         "save it as DOCX, XLSX, PPTX or EML and scan that. Nothing is passed downstream.")
     raise ValueError(f"{path.name}: unsupported file type ({ftype}); refusing to pass it downstream")
 
 

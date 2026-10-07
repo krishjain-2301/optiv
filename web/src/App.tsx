@@ -1,5 +1,5 @@
 // Layout: the sidebar lists the modes by category; each page lays its own steps out left to right.
-import { BadgeCheck, Download, FileText, Flame, EyeOff, LayoutDashboard, ShieldCheck, FileUp } from "lucide-react";
+import { BadgeCheck, Download, FileText, Flame, EyeOff, LayoutDashboard, ShieldCheck, FileUp, UserCheck } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { TooltipLayer } from "./components/tooltip";
 import { clock, int, percent } from "./lib/format";
@@ -10,6 +10,7 @@ import Findings from "./pages/Findings";
 import Overview from "./pages/Overview";
 import Redaction from "./pages/Redaction";
 import Reports from "./pages/Reports";
+import Review from "./pages/Review";
 import Scan from "./pages/Scan";
 import { isActive, useStore } from "./store";
 
@@ -25,6 +26,7 @@ const NAV = [
     { to: "/redaction", label: "Redaction", icon: EyeOff },
   ] },
   { section: "Assurance", items: [
+    { to: "/review", label: "Review", icon: UserCheck },
     { to: "/evaluation", label: "Evaluation", icon: BadgeCheck },
     { to: "/reports", label: "Reports", icon: Download },
   ] },
@@ -34,8 +36,8 @@ function RunCard() {
   const { run, scan } = useStore();
   if (isActive(scan)) {
     return (
-      <NavLink to="/?step=3" className="side-card live">
-        <b>{scan.state === "paused" ? "Scan paused" : "Scan in progress"}</b>
+      <NavLink to={scan.kind === "review" ? "/review?step=3" : "/?step=3"} className="side-card live">
+        <b>{scan.kind === "review" ? "Applying review" : scan.state === "paused" ? "Scan paused" : "Scan in progress"}</b>
         <div className="progress small"><i style={{ width: percent(scan.fraction, 1) }} className={scan.state === "paused" ? "paused" : ""} /></div>
         <div className="side-row"><span>{percent(scan.fraction)}</span><span>{clock(scan.elapsed)}</span></div>
       </NavLink>
@@ -86,6 +88,7 @@ export default function App() {
           <Route path="/findings" element={<Findings />} />
           <Route path="/extraction" element={<Extraction />} />
           <Route path="/redaction" element={<Redaction />} />
+          <Route path="/review" element={<Review />} />
           <Route path="/evaluation" element={<Evaluation />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="*" element={<Scan />} />

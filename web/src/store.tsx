@@ -2,18 +2,25 @@
 // The run is fetched once and every page reads it from here, so moving between pages and steps
 // never waits on the server.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, IDLE, type DocDetail, type Evaluation, type Run, type ScanSettings, type ScanStatus } from "./api";
+import {
+  api, IDLE, type DocDetail, type Evaluation, type Meta, type ReviewAddition, type ReviewDecision, type Run, type ScanSettings,
+  type ScanStatus,
+} from "./api";
 
 export const DEFAULT_SETTINGS: ScanSettings = {
   ocr_engine: "auto", ocr_embedded_images: true, use_gliner: false, propagate_persons: true,
   redact_threshold: 0.6, review_threshold: 0.35, low_conf_ocr: 0.6,
   extra_allow_list: [], deny_list: [], vault_passphrase: null,
+  profile: "default", verify_outputs: true, blank_textless_images: true, detect_faces: true, token_key: null, operator: null,
 };
+const NO_META: Meta = { default_operator: "", profiles: [], entities: [], max_upload_mb: 300 };
+/** Secrets are typed in for one session and never written to the browser's storage. */
+const SECRETS = { vault_passphrase: null, token_key: null };
 const STORAGE_KEY = "pii-shield-settings";
 
 function loadSettings(): ScanSettings {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"), vault_passphrase: null };
+    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(STORAGE_KEY) ?? "{}"), ...SECRETS };
   } catch {
     return DEFAULT_SETTINGS;
   }
@@ -25,6 +32,7 @@ interface Store {
   ready: boolean;
   run: Run | null;
   scan: ScanStatus;
+  meta: Meta;
   settings: ScanSettings;
   setSettings: (patch: Partial<ScanSettings>) => void;
   files: File[];
@@ -36,6 +44,8 @@ interface Store {
   pause: () => Promise<void>;
   resume: () => Promise<void>;
   cancel: () => Promise<void>;
+  /** Apply a reviewer's decisions; the server writes every output again as a background job. */
+  submitReview: (decisions: ReviewDecision[], additions: ReviewAddition[]) => Promise<void>;
   refreshRun: () => Promise<void>;
   deleteSession: () => Promise<void>;
   loadDoc: (file: string) => Promise<DocDetail>;
@@ -47,6 +57,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   const [run, setRun] = useState<Run | null>(null);
   const [scan, setScan] = useState<ScanStatus>(IDLE);
+  const [meta, setMeta] = useState<Meta>(NO_META);
   const [settings, setAll] = useState<ScanSettings>(loadSettings);
   const [files, setFiles] = useState<File[]>([]);
   const [gold, setGold] = useState<File | null>(null);
@@ -59,10 +70,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    Promise.all([api.scan(), api.run()])
-      .then(([s, r]) => {
+    Promise.all([api.scan(), api.run(), api.meta()])
+      .then(([s, r, m]) => {
         setScan(s);
         setRun(r);
+        setMeta(m);
       })
       .finally(() => setReady(true));
   }, []);
@@ -75,6 +87,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       try {
         const s = await api.scan();
         if (s.state === "done") await refreshRun();
+        else if (s.state === "cancelled" || s.state === "failed") setRun(await api.run()); // a stopped review deletes the run
         setScan(s);
       } catch {
         /* server restarting: the next tick tries again */
@@ -87,7 +100,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setAll((old) => {
       const next = { ...old, ...patch };
       next.review_threshold = Math.min(next.review_threshold, next.redact_threshold);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...next, vault_passphrase: null }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...next, ...SECRETS }));
       return next;
     });
   }, []);
@@ -103,6 +116,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       setStartError((e as Error).message);
     }
   }, [settings, files, gold]);
+
+  const submitReview = useCallback(async (decisions: ReviewDecision[], additions: ReviewAddition[]) => {
+    const s = await api.review(decisions, additions, settings.operator);
+    docs.current.clear();
+    setScan({ ...IDLE, ...s }); // the run stays on screen while its outputs are rewritten
+  }, [settings.operator]);
 
   const control = (call: () => Promise<ScanStatus>) => async () => {
     try {
@@ -130,10 +149,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<Store>(() => ({
-    ready, run, scan, settings, setSettings, files, setFiles, gold, setGold, startError, start,
+    ready, run, scan, meta, settings, setSettings, files, setFiles, gold, setGold, startError, start,
     pause: control(api.pause), resume: control(api.resume), cancel: control(api.cancel),
-    refreshRun, deleteSession, loadDoc,
-  }), [ready, run, scan, settings, setSettings, files, gold, startError, start, refreshRun, deleteSession, loadDoc]);
+    submitReview, refreshRun, deleteSession, loadDoc,
+  }), [ready, run, scan, meta, settings, setSettings, files, gold, startError, start, submitReview, refreshRun, deleteSession, loadDoc]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
@@ -158,7 +177,7 @@ export function useDoc(file: string | undefined) {
     return () => {
       live = false;
     };
-  }, [file, loadDoc, run?.run_id]);
+  }, [file, loadDoc, run?.run_id, run?.reviews.length]);
   return state;
 }
 
@@ -168,6 +187,6 @@ export function useEvaluation() {
   const reload = useCallback(() => api.evaluation().then(setEv).catch(() => setEv(null)), []);
   useEffect(() => {
     if (run) reload();
-  }, [run?.run_id, reload]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [run?.run_id, run?.reviews.length, reload]); // eslint-disable-line react-hooks/exhaustive-deps
   return { ev, setEv };
 }

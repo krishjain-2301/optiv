@@ -82,6 +82,7 @@ const REGISTER: Col<Finding>[] = [
   { key: "score", label: "Score", value: (f) => f.score, render: (f) => <Meter value={f.score} label={f.score.toFixed(2)} /> },
   { key: "decision", label: "Decision", value: (f) => DECISION_LABEL[f.decision] },
   { key: "layer", label: "Layer", value: (f) => f.layer },
+  { key: "review", label: "Reviewed", value: (f) => f.review || null },
   { key: "reasons", label: "Reasons", value: (f) => f.reasons.join("; "), wrap: true, width: "28rem" },
 ];
 

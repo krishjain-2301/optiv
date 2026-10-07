@@ -25,6 +25,7 @@ function Body() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const o = run!.outputs;
+  const integrity = run!.integrity;
   const remove = async () => {
     setError(null);
     try {
@@ -44,7 +45,10 @@ function Body() {
             { label: "Masked copies", value: o.safe.filter((f) => f.kind === "Masked copy").length, sub: "same layout, metadata cleared" },
             { label: "Sensitive files", value: o.sensitive.length, status: o.sensitive.length ? "serious" : "good", sub: "contain original values" },
             { label: "Token vault", value: o.vault ? "Encrypted" : "Not saved", sub: o.vault ? "AES-256-GCM" : "no passphrase was set" },
+            { label: "Outputs match the manifest", value: integrity.ok ? "Yes" : "No", status: integrity.ok ? "good" : "critical", sub: `${integrity.audit_records} audit records, chain ${integrity.ok ? "intact" : "broken"}` },
+            { label: "Manifest signature", value: integrity.signed ? "Ed25519" : "Unsigned", status: integrity.signed ? "good" : "warning", sub: integrity.signed ? "valid" : "set PII_SHIELD_SIGNING_KEY to sign" },
           ]} />
+          {integrity.problems.map((p) => <Notice kind="error" key={p}>{p}</Notice>)}
           <Card title="Safe to share" sub="Masked files, LLM text, masked register, summary, audit log">
             <Files files={o.safe} />
             <a className="btn primary" href="/api/run/outputs.zip" download><FolderArchive size={16} /> Download all shareable outputs (.zip)</a>
@@ -61,7 +65,7 @@ function Body() {
       )}
       {step === 2 && (
         <Card title="This session's files" sub="Uploads, extracted text, reports and masked copies">
-          <div className="chips"><Chip label="Run" value={run!.run_id} /><Chip label="Folder" value={o.folder} /></div>
+          <div className="chips"><Chip label="Run" value={run!.run_id} /><Chip label="Operator" value={run!.operator} /><Chip label="Folder" value={o.folder} /></div>
           <Muted>Files are deleted before each new run, on request, and when the server stops. Folders left by a server that was killed are removed the next time it starts.</Muted>
           <button className="btn danger" onClick={remove} disabled={isActive(scan)}><Trash2 size={16} /> Delete this session's files now</button>
           {error && <Notice kind="error">{error}</Notice>}

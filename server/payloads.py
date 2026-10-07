@@ -8,15 +8,17 @@ from __future__ import annotations
 from collections import Counter
 from pathlib import Path
 
-from optiv_pii_shield import RunResult
+from optiv_pii_shield import RunResult, audit, review
+from optiv_pii_shield.config import PROFILES, SPECIAL_CATEGORIES
 from optiv_pii_shield.evaluate import evaluate, load_gold, structure_retention
 from optiv_pii_shield.redact.files import finding_boxes
 from optiv_pii_shield.report import file_summary
 
-SHAREABLE_REPORTS = ("pii_exposure_register.csv", "pii_exposure_register.xlsx", "summary.json", "audit_log.jsonl")
+SHAREABLE_REPORTS = ("pii_exposure_register.csv", "pii_exposure_register.xlsx", "summary.json", "audit_log.jsonl",
+                     "run_manifest.json")
 KINDS = {".md": "LLM text", ".csv": "Register", ".xlsx": "Register", ".json": "Summary", ".jsonl": "Audit log"}
 FINDING_FIELDS = ("file", "page", "location", "kind", "source", "context_type", "entity_type", "text", "token", "score",
-                  "decision", "layer", "recognizer")
+                  "decision", "layer", "recognizer", "review")
 
 
 def shareable_outputs(res: RunResult, out: Path) -> list[Path]:
@@ -33,7 +35,8 @@ def sensitive_outputs(res: RunResult, out: Path) -> list[Path]:
 
 
 def _file_row(p: Path) -> dict:
-    kind = "Masked copy" if ".masked." in p.name else "Token vault" if "vault" in p.name else KINDS.get(p.suffix, "Other")
+    kind = ("Masked copy" if ".masked." in p.name else "Token vault" if "vault" in p.name
+            else "Manifest" if p.name == "run_manifest.json" else KINDS.get(p.suffix, "Other"))
     return {"name": p.name, "kind": kind, "size": p.stat().st_size}
 
 
@@ -55,17 +58,28 @@ def run_payload(res: RunResult, out: Path, settings, has_gold: bool) -> dict:
     tokens: dict[str, dict] = {}
     for f in live:
         if f.token:
-            t = tokens.setdefault(f.token, {"token": f.token, "entity_type": f.entity_type, "occurrences": 0, "files": set()})
+            t = tokens.setdefault(f.token, {"token": f.token, "entity_type": f.entity_type, "occurrences": 0, "files": set(),
+                                            "linked": f.token in res.vault.linked})
             t["occurrences"] += 1
             t["files"].add(f.file)
     docs = list(res.docs.values())
     masked = [d.gate.get("masked") for d in docs]
+    check = audit.verify_run(out) if (out / "run_manifest.json").exists() else {"ok": False, "signed": False, "problems": []}
+    verified = [d.gate.get("verified", {}) for d in docs]
     return {
         "run_id": res.run_id,
         "components": res.components,
         "timings": res.timings,
         "errors": res.errors,
         "thresholds": {"redact": settings.redact_threshold, "review": settings.review_threshold},
+        "profile": {"name": settings.profile, "label": PROFILES.get(settings.profile, PROFILES["default"])["label"]},
+        "operator": settings.operator,
+        "keyed_tokens": bool(settings.token_key),
+        "special_categories": sorted(SPECIAL_CATEGORIES),
+        "review_queue": review.queue(res.findings),
+        "reviews": res.reviews,
+        "integrity": {"ok": check["ok"], "signed": check["signed"], "problems": check["problems"],
+                      "audit_records": check.get("audit", {}).get("records", 0), "public_key": check.get("public_key")},
         "has_gold": has_gold,
         "files": files,
         "findings": [_finding(f) for f in live],
@@ -77,6 +91,12 @@ def run_payload(res: RunResult, out: Path, settings, has_gold: bool) -> dict:
             "people": len(res.vault.person_no),
             "caught": sum(d.gate.get("llm_text_scrubbed", 0) + d.gate.get("masked_scrubbed", 0) for d in docs),
             "masked_written": masked.count("written"), "masked_withheld": masked.count("withheld"),
+            "verified_pages": sum(v.get("pages", 0) for v in verified),
+            "verified_pictures": sum(v.get("pictures", 0) for v in verified),
+            "verify_covered": sum(v.get("covered", 0) for v in verified),
+            "verify_on": settings.verify_outputs,
+            "faces": sum(v.kind == "face" for d in docs for v in d.visuals),
+            "qr_codes": sum(v.kind == "qr" for d in docs for v in d.visuals),
             "outputs": len(res.outputs),
         },
         "outputs": {
@@ -109,6 +129,9 @@ def doc_payload(res: RunResult, name: str) -> dict:
     return {
         "file": doc.file, "file_type": doc.file_type, "pages": doc.pages, "ocr_pages": doc.ocr_pages,
         "previewable": doc.file_type == "pdf" and doc.pages > 0,
+        "masked_preview": doc.file_type == "pdf" and f"masked:{name}" in res.outputs,
+        "visuals": [{"kind": v.kind, "page": v.page} for v in doc.visuals],
+        "verification": doc.gate.get("verified", {}),
         "markdown": doc.markdown, "redacted": res.redacted[name], "structure": doc.structure,
         "kinds": dict(Counter(s.kind for s in doc.spans).most_common()),
         "sources": dict(Counter(s.source for s in doc.spans).most_common()),
@@ -121,16 +144,17 @@ def doc_payload(res: RunResult, name: str) -> dict:
     }
 
 
-def page_png(res: RunResult, name: str, page: int) -> bytes:
+def page_png(res: RunResult, name: str, page: int, masked: bool = False) -> bytes:
+    """A page of the original, or of the masked copy as it was written (after verification)."""
     import pymupdf as fitz
 
     doc = res.docs[name]
-    with fitz.open(doc.path) as pdf:
+    with fitz.open(res.outputs[f"masked:{name}"] if masked else doc.path) as pdf:
         return pdf[page - 1].get_pixmap(dpi=110).tobytes("png")
 
 
-def evaluation_payload(res: RunResult, gold: Path | None) -> dict:
-    retention = {name: structure_retention(doc) for name, doc in res.docs.items()}
+def evaluation_payload(res: RunResult, gold: Path | None, transcriptions: dict[str, str] | None = None) -> dict:
+    retention = {name: structure_retention(doc, (transcriptions or {}).get(name)) for name, doc in res.docs.items()}
     if gold is None:
         return {"has_gold": False, "retention": retention}
     items = load_gold(gold)

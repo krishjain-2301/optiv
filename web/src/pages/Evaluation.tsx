@@ -97,7 +97,17 @@ function Errors({ ev }: { ev: NonNullable<Ev["scores"]> }) {
   );
 }
 
-function Retention({ ev }: { ev: Ev }) {
+function Retention({ ev, setEv }: { ev: Ev; setEv: (e: Ev) => void }) {
+  const [error, setError] = useState<string | null>(null);
+  const upload = async (file: string, f: File | undefined) => {
+    if (!f) return;
+    setError(null);
+    try {
+      setEv(await api.uploadTranscription(file, f));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
   const files = Object.entries(ev.retention);
   const scored = files.map(([, r]) => r.score).filter((s): s is number => s != null);
   const mean = scored.length ? scored.reduce((a, b) => a + b, 0) / scored.length : null;
@@ -112,7 +122,15 @@ function Retention({ ev }: { ev: Ev }) {
             { key: "file", label: "File", value: ([f]) => f },
             { key: "score", label: "Retained", value: ([, r]) => r.score, render: ([, r]) => (r.score == null ? "–" : <Meter value={r.score} label={percent(r.score, 1)} />) },
             { key: "method", label: "Method", value: ([, r]) => r.method, wrap: true },
+            { key: "tr", label: "", value: () => null, align: "right", render: ([f, r]) => (r.method.startsWith("element counts") ? null : (
+              <label className="btn small">
+                <Upload size={14} /> Transcription
+                <input type="file" accept=".txt" hidden onChange={(e) => { upload(f, e.target.files?.[0]); e.target.value = ""; }} />
+              </label>
+            )) },
           ]} />
+          <Muted>A scanned PDF or a picture has no structure of its own to count. Type out a few pages by hand, upload the text, and retention is the token similarity between it and what was extracted.</Muted>
+          {error && <Notice kind="error">{error}</Notice>}
         </Card>
         <Card title="Element counts" sub="Extracted vs. the raw document XML">
           {detail.length ? (
@@ -140,7 +158,7 @@ function Body() {
       {step > 0 && !ev && <Muted>Loading…</Muted>}
       {step === 1 && ev && (ev.scores ? <Scores ev={ev.scores} /> : <Notice kind="info">{NEED_GOLD}</Notice>)}
       {step === 2 && ev && (ev.scores ? <Errors ev={ev.scores} /> : <Notice kind="info">{NEED_GOLD}</Notice>)}
-      {step === 3 && ev && <Retention ev={ev} />}
+      {step === 3 && ev && <Retention ev={ev} setEv={setEv} />}
     </>
   );
 }

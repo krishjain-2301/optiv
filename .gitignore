@@ -17,3 +17,8 @@ Cadence_*.pptx
 # Dashboard build (web/): dependencies and build output
 web/node_modules/
 web/dist/
+
+# Signing keys (python -m optiv_pii_shield keygen): never committed
+*.key
+pii_shield_signing.*
+keys/

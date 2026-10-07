@@ -29,7 +29,7 @@ log = logging.getLogger(__name__)
 OUTPUT_ENTITIES = [
     "PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "EMPLOYEE_ID", "VENDOR_ID", "US_SSN", "PASSPORT", "IN_PAN",
     "PL_PESEL", "TAX_ID", "NATIONAL_ID", "CREDIT_CARD", "IBAN_CODE", "DATE_OF_BIRTH", "ADDRESS", "IN_AADHAAR",
-    "IP_ADDRESS", "CREDENTIAL",
+    "IP_ADDRESS", "CREDENTIAL", "BANK_ACCOUNT", "UPI_ID", "DRIVING_LICENCE", "IN_VOTER_ID", "UK_NINO", "HEALTH_DATA",
 ]
 
 
@@ -47,7 +47,8 @@ class Detector:
             registry.add_recognizer(SpacyRecognizer(supported_entities=["PERSON"]))
             self.components.append(f"L2 spaCy NER ({model})")
             if self.settings.use_gliner:
-                registry.add_recognizer(load_gliner(self.settings.gliner_model, self.settings.gliner_threshold))
+                registry.add_recognizer(load_gliner(self.settings.gliner_model, self.settings.gliner_threshold,
+                                                        self.settings.gliner_revision))
                 self.components.append(f"L2 GLiNER ({self.settings.gliner_model})")
             self.analyzer = AnalyzerEngine(registry=registry, nlp_engine=nlp_engine, supported_languages=["en"])
             supported = set(self.analyzer.get_supported_entities("en"))

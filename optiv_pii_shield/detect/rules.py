@@ -81,6 +81,33 @@ RULES: list[Rule] = [
     Rule("secret_assigned", "CREDENTIAL",
          r"(?i:\b(?:api[_ -]?key|secret(?:[_ -]?key)?|access[_ -]?token|auth[_ -]?token|bearer|password|passwd|pwd|client[_ -]?secret)"
          r"[\"']?\s*(?:[:=]|is)\s*[\"']?)([^\s\"',;]{8,})", 0.75, group=1),
+    # Bank details outside IBAN countries: an IFSC code names a branch and sits next to the account
+    # number; a bare run of digits is an account number only when a label says so.
+    Rule("in_ifsc", "BANK_ACCOUNT", r"\b[A-Z]{4}0[A-Z0-9]{6}\b", 0.45, None, ctx("BANK_ACCOUNT")),
+    Rule("bank_account", "BANK_ACCOUNT", r"(?<![\d-])\d{9,18}(?![\d-])", 0.25, None, ctx("BANK_ACCOUNT"), requires_context=True),
+    # UPI addresses have a bank handle where an e-mail has a domain ("priya.raman@okhdfcbank").
+    Rule("in_upi", "UPI_ID",
+         r"(?<![\w.+-])[A-Za-z0-9._-]{2,}@(?:ok(?:axis|hdfcbank|icici|sbi)|ybl|ibl|axl|apl|upi|paytm|ptyes|ptsbi|pthdfc|ptaxis"
+         r"|sbi|hdfcbank|icici|axisbank|kotak|yesbank|idfcbank|airtel|jio|freecharge|fbl|okbizaxis)(?![\w.-])", 0.85),
+    Rule("uk_nino", "UK_NINO", r"\b(?!BG|GB|NK|KN|TN|NT|ZZ)[A-CEGHJ-PR-TW-Z][A-CEGHJ-NPR-TW-Z] ?\d{2} ?\d{2} ?\d{2} ?[A-D]\b",
+         0.45, None, ctx("UK_NINO")),
+    Rule("in_voter_id", "IN_VOTER_ID", r"\b[A-Z]{3}\d{7}\b", 0.2, None, ctx("IN_VOTER_ID"), requires_context=True),
+    Rule("in_driving_licence", "DRIVING_LICENCE", r"\b[A-Z]{2}[- ]?\d{2}[- ]?(?:19|20)\d{2}[- ]?\d{7}\b", 0.5, None,
+         ctx("DRIVING_LICENCE")),
+    Rule("driving_licence_labelled", "DRIVING_LICENCE",
+         r"(?i:\b(?:driving licen[cs]e|driver'?s? licen[cs]e|dl)\s*(?:no\.?|number|#)?\s*[:#-]?\s*)([A-Z0-9][A-Z0-9 -]{5,18}[A-Z0-9])\b",
+         0.65, group=1, min_digits=4),
+    # Health data is a special category. Only stated facts are flagged ("diagnosed with ...", a
+    # blood group next to the word); both land in the review band unless a header confirms them.
+    Rule("blood_group", "HEALTH_DATA", r"(?<![A-Za-z0-9])(?:AB|A|B|O)\s?(?:[+-]|\bpositive\b|\bnegative\b)(?:ve\b)?(?![A-Za-z0-9])",
+         0.2, None, ctx("HEALTH_DATA"), requires_context=True),
+    Rule("health_statement", "HEALTH_DATA",
+         r"(?i:\b(?:diagnosed with|suffers from|undergoing treatment for|medical condition\s*[:-])\s+)"
+         r"([A-Za-z][A-Za-z0-9' -]{2,40}?)(?=[.,;:\n)]|\s+(?:and|since|in|on|at|by|for)\b|$)", 0.5, group=1),
+    # Indian postal addresses have no street-suffix word; they start with a unit and end in a PIN code.
+    Rule("in_address", "ADDRESS",
+         r"(?i:\b(?:flat|plot|house|h\.? ?no|door no|d\.? ?no|block|sector|shop)\b\.?\s*(?:no\.?\s*)?#?\s*)[0-9A-Z][^\n]{4,90}?(?<!\d)[1-9]\d{2} ?\d{3}(?!\d)",
+         0.6, None, ctx("ADDRESS")),
     Rule("iban", "IBAN_CODE", r"\b[A-Z]{2}\d{2}(?:\s?[A-Z0-9]{4}){2,7}(?:\s?[A-Z0-9]{1,4})?\b", 0.40, v.check_iban, ctx("IBAN_CODE")),
     Rule("dob_numeric", "DATE_OF_BIRTH", r"\b\d{1,2}[/.-]\d{1,2}[/.-](?:19|20)?\d{2}\b", 0.15, v.check_date,
          ctx("DATE_OF_BIRTH"), requires_context=True),

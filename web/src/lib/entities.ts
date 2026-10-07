@@ -9,10 +9,10 @@ export const ACCENT = SERIES[0];
 export const RAMP = ["#17243a", "#184f95", "#3987e5", "#9ec5f4"]; // one hue: little -> much
 
 export const GROUPS: Record<string, string[]> = {
-  People: ["PERSON", "DATE_OF_BIRTH"],
+  People: ["PERSON", "DATE_OF_BIRTH", "HEALTH_DATA"],
   Contact: ["EMAIL_ADDRESS", "PHONE_NUMBER", "ADDRESS"],
   "Government & financial ID": ["US_SSN", "PASSPORT", "IN_PAN", "PL_PESEL", "TAX_ID", "NATIONAL_ID", "IN_AADHAAR",
-    "CREDIT_CARD", "IBAN_CODE"],
+    "CREDIT_CARD", "IBAN_CODE", "BANK_ACCOUNT", "UPI_ID", "DRIVING_LICENCE", "IN_VOTER_ID", "UK_NINO"],
   "Internal ID": ["EMPLOYEE_ID", "VENDOR_ID"],
   "Secrets & network": ["CREDENTIAL", "IP_ADDRESS"],
 };
@@ -33,6 +33,8 @@ const LABEL: Record<string, string> = {
   EMAIL_ADDRESS: "E-mail address", US_SSN: "US SSN", IN_PAN: "PAN (India)", PL_PESEL: "PESEL (Poland)",
   IN_AADHAAR: "Aadhaar (India)", TAX_ID: "Tax ID", NATIONAL_ID: "National ID", EMPLOYEE_ID: "Employee ID",
   VENDOR_ID: "Vendor ID", IBAN_CODE: "IBAN", IP_ADDRESS: "IP address", LOW_CONFIDENCE_OCR: "Unreadable OCR text",
+  BANK_ACCOUNT: "Bank account", UPI_ID: "UPI ID (India)", DRIVING_LICENCE: "Driving licence", IN_VOTER_ID: "Voter ID (India)",
+  UK_NINO: "National Insurance no. (UK)", HEALTH_DATA: "Health data",
 };
 
 /** US_SSN -> US SSN, DATE_OF_BIRTH -> Date of birth */

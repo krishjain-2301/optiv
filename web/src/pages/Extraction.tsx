@@ -14,8 +14,9 @@ import { useDoc, useStore } from "../store";
 const SOURCE_COLOR: Record<string, string> = { native: SERIES[0], ocr: SERIES[1], image_ocr: SERIES[2] };
 const label = (key: string) => key.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase());
 
-function Preview({ doc, runId }: { doc: DocDetail; runId: string }) {
+function Preview({ doc, version }: { doc: DocDetail; version: string }) {
   const [page, setPage] = useState(1);
+  const [side, setSide] = useState<"masked" | "text">(doc.masked_preview ? "masked" : "text");
   useEffect(() => setPage(1), [doc.file]);
   if (!doc.previewable) {
     return <Card title="Extracted text" sub="Structure preserved as Markdown"><Markdown text={doc.markdown} /></Card>;
@@ -31,20 +32,31 @@ function Preview({ doc, runId }: { doc: DocDetail; runId: string }) {
         <label className="pageno">Page <input className="input" type="number" min={1} max={doc.pages} value={page} onChange={(e) => go(Number(e.target.value))} /> of {doc.pages}</label>
         <button className="btn icon" disabled={page >= doc.pages} onClick={() => go(page + 1)} aria-label="Next page"><ChevronRight size={16} /></button>
         <span className="muted">{boxes.length} finding box(es) on this page{doc.ocr_pages.includes(page) ? " · read by OCR" : ""}</span>
+        <span className="seg" role="group" aria-label="Shown beside the original">
+          <button className={side === "masked" ? "btn small on" : "btn small"} aria-pressed={side === "masked"} disabled={!doc.masked_preview} onClick={() => setSide("masked")}>Masked page</button>
+          <button className={side === "text" ? "btn small on" : "btn small"} aria-pressed={side === "text"} onClick={() => setSide("text")}>Extracted text</button>
+        </span>
       </div>
       <Row>
         <Card title={`Page ${page}`} sub="Boxes mark detected PII; hover one for its category and score">
           <Legend items={GROUP_COLOR} />
           <div className="page-view">
-            <img src={api.pageUrl(doc.file, page, runId)} alt={`${doc.file}, page ${page}`} />
+            <img src={api.pageUrl(doc.file, page, version)} alt={`${doc.file}, page ${page}`} />
             {boxes.map((b, i) => (
               <span key={i} className="page-box" style={{ left: `${b.x * 100}%`, top: `${b.y * 100}%`, width: `${b.w * 100}%`, height: `${b.h * 100}%`, outlineColor: entityColor(b.entity_type) }}
                 {...tip(pretty(b.entity_type), [["Score", b.score.toFixed(2)], ["Decision", DECISION_LABEL[b.decision]]])} />
             ))}
           </div>
         </Card>
-        <Card title="Extracted text" sub="Structure preserved as Markdown"><Markdown text={pageText} /></Card>
+        {side === "masked" && doc.masked_preview ? (
+          <Card title={`Page ${page}, masked`} sub="The masked copy as it was written, after verification">
+            <div className="page-view"><img src={api.pageUrl(doc.file, page, version, true)} alt={`${doc.file}, masked page ${page}`} /></div>
+          </Card>
+        ) : (
+          <Card title="Extracted text" sub="Structure preserved as Markdown"><Markdown text={pageText} /></Card>
+        )}
       </Row>
+      {!doc.masked_preview && <Notice kind="warning">This file has no masked copy: it was withheld by the leak gate or by verification.</Notice>}
     </>
   );
 }
@@ -73,16 +85,18 @@ function Structure({ doc }: { doc: DocDetail }) {
 }
 
 function Images({ doc }: { doc: DocDetail }) {
-  if (!doc.images.length) return <Notice kind="info">This file has no embedded images.</Notice>;
+  if (!doc.images.length && !doc.visuals.length) return <Notice kind="info">This file has no embedded images.</Notice>;
   const status: Record<string, number> = {};
   for (const i of doc.images) status[i.status] = (status[i.status] ?? 0) + 1;
   return (
     <>
       <Kpis tiles={[
         { label: "Images", value: doc.images.length, sub: "embedded or scanned regions" },
+        { label: "Faces", value: doc.visuals.filter((v) => v.kind === "face").length, sub: "blanked in the masked copy" },
+        { label: "QR codes", value: doc.visuals.filter((v) => v.kind === "qr").length, sub: "blanked in the masked copy" },
         ...Object.entries(status).map(([k, v]) => ({
           label: label(k), value: v, status: k === "read" ? "good" as const : k === "skipped" ? "warning" as const : "serious" as const,
-          sub: k === "read" ? "text used" : k === "skipped" ? "too small to hold text" : "withheld from the LLM text",
+          sub: k === "read" ? "text used" : k === "skipped" ? "too small to hold text" : k === "no_text" ? "no readable text: blanked" : "withheld from the LLM text",
         })),
       ]} />
       <Card title="Images" sub="OCR outcome per image">
@@ -112,7 +126,7 @@ function Body() {
       {error && <Notice kind="error">{error}</Notice>}
       {!doc ? !error && <Muted>Loading…</Muted> : (
         <>
-          {step === 0 && <Preview doc={doc} runId={run.run_id} />}
+          {step === 0 && <Preview doc={doc} version={`${run.run_id}-${run.reviews.length}`} />}
           {step === 1 && <Structure doc={doc} />}
           {step === 2 && (
             <Card title="Span map" sub="Provenance of every text element: page, location, kind, source">

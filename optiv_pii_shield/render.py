@@ -9,7 +9,7 @@ from .models import Document, Span
 QUOTED = {"header", "footer", "comment", "footnote", "endnote", "notes", "text_box", "alt_text", "chart", "diagram", "link"}
 # Layout / master placeholders and Word building blocks are redacted in the masked file but are
 # boilerplate ("Click to edit Master title style"), so they are left out of the text for the LLM.
-NOT_RENDERED = {"template", "field"}
+NOT_RENDERED = {"template", "field", "bookmark"}  # bookmarks repeat the headings
 
 
 def _esc(t: str) -> str:

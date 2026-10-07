@@ -19,7 +19,7 @@ pandas==3.0.6
 openpyxl==3.1.5
 rapidfuzz==3.14.6
 PyYAML==6.0.3                 # optiv_pii_shield/data/org.yaml
-cryptography==45.0.7          # token vault encryption (AES-256-GCM)
+cryptography==50.0.2          # token vault encryption (AES-256-GCM), manifest signatures (Ed25519)
 
 # Dashboard server (server/). The dashboard itself is built from web/ with Node: see README.
 fastapi==0.142.2
@@ -30,6 +30,8 @@ python-multipart==0.0.32      # file uploads
 pytest==9.1.1
 httpx==0.28.1                 # FastAPI's test client (tests/test_server.py)
 faker==37.4.0                 # held-out test set (scripts/make_heldout.py)
+ruff==0.16.10                 # lint (CI)
+pip-audit==2.10.1             # known-vulnerability check of these pins (CI)
 
 # Optional extras (not pinned, not measured):
 #   pip install gliner            # GLiNER-PII zero-shot model (pulls torch)

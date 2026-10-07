@@ -202,7 +202,7 @@ def test_gate_finds_values_split_across_runs_and_escaped():
     v.values["[EMAIL_001]"].add("zoe.obrien@example.com")
     v.values["[PHONE_001]"].add("+1 (212) 555-0193")
     n = build_needles(v)
-    assert scan_bytes("a.xml", f"<w:t>Zoë O'Bri</w:t></w:r><w:r><w:t>en</w:t>".encode(), n)
+    assert scan_bytes("a.xml", "<w:t>Zoë O'Bri</w:t></w:r><w:r><w:t>en</w:t>".encode(), n)
     assert scan_bytes("a.xml", "<w:t>Zoë O&apos;Brien</w:t>".encode(), n)
     assert scan_bytes("a.rels", b'Target="mailto:zoe.obrien%40example.com"', n)
     assert scan_bytes("a.rels", b'Target="tel:+12125550193"', n)
