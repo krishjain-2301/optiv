@@ -1,11 +1,14 @@
 """Tunable settings. Everything a reviewer might question lives here, in one place."""
 from __future__ import annotations
 
+import getpass
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
+
+from .modelstore import GLINER_REVISION
 
 
 @dataclass
@@ -17,12 +20,17 @@ class Settings:
     detect_regions: bool = True  # find tables and screenshots inside scanned pages
     ocr_embedded_images: bool = True  # OCR images embedded in DOCX / PPTX / PDF
     min_image_px: int = 120  # skip icons and logos smaller than this on both sides
+    detect_faces: bool = True  # faces in pictures and scans are blanked in the masked copy
+    detect_qr: bool = True  # QR codes encode text nobody reads by eye: blanked too
+    face_threshold: float = 0.8
+    max_pages: int = 2000  # a PDF with more pages is refused (resource limit)
 
     # --- detection ----------------------------------------------------------------
     use_spacy: bool = True
     spacy_model: str = "en_core_web_lg"
     use_gliner: bool = False  # needs `pip install gliner` (pulls torch)
     gliner_model: str = "knowledgator/gliner-pii-base-v1.0"
+    gliner_revision: str = GLINER_REVISION  # pinned snapshot of the weights
     gliner_threshold: float = 0.45
     propagate_persons: bool = True
     context_window: int = 60  # characters of neighbouring text given to recognisers
@@ -34,7 +42,21 @@ class Settings:
     low_conf_image_ocr: float = 0.80  # stricter floor for text read from screenshots / embedded images
     withhold_low_conf_images: bool = True  # text from images OCR'd below low_conf_ocr never reaches the LLM
 
+    # --- redaction ----------------------------------------------------------------
+    profile: str = "default"  # what replaces each category: see PROFILES
+    # Pictures nobody could read (photos, signatures, logos without text, images left un-OCR'd)
+    # are blanked in the masked copy: an image that was not read is not trusted.
+    blank_textless_images: bool = True
+    min_blank_px: int = 32  # bullets and icons smaller than this on a side are left alone
+    # After masking, every masked page and picture is OCR'd again and searched for the vault's
+    # values; a value still readable is covered, and the file is withheld if it cannot be.
+    verify_outputs: bool = True
+    # With a key, tokens are derived from the value (HMAC-SHA256) and so are the same in every
+    # run; without one they are numbered per run. Kept out of repr like the passphrase.
+    token_key: str | None = field(default=None, repr=False)
+
     # --- outputs ------------------------------------------------------------------
+    operator: str = field(default_factory=lambda: _os_user())  # recorded in the manifest and audit log
     # The token vault is saved only when this is set, and only encrypted. Kept out of repr so it
     # never lands in a log or traceback.
     vault_passphrase: str | None = field(default=None, repr=False)
@@ -42,6 +64,13 @@ class Settings:
     # --- vocabularies -------------------------------------------------------------
     allow_list: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_LIST))
     extra_deny_list: list[str] = field(default_factory=lambda: list(ORG["deny_list"]))  # names to always redact
+
+
+def _os_user() -> str:
+    try:
+        return getpass.getuser()
+    except Exception:
+        return "unknown"
 
 
 def load_org_config(path: str | Path | None = None) -> dict:
@@ -102,6 +131,12 @@ HEADER_CATEGORIES: list[tuple[str, str]] = [
     (r"\bip\b|ip address", "IP_ADDRESS"),
     (r"api ?key|secret|password|passwd|\btoken\b|credential", "CREDENTIAL"),
     (r"\btin\b|tax ?id|taxpayer|\bnip\b|\bein\b|gstin|\bgst\b|\bvat\b", "TAX_ID"),
+    (r"bank account|account (?:no|number|#)|a/c ?(?:no|number)?\b|\bifsc\b|sort code|routing", "BANK_ACCOUNT"),
+    (r"\bupi\b|\bvpa\b", "UPI_ID"),
+    (r"driving licen[cs]e|driver'?s? licen[cs]e|\bdl (?:no|number)", "DRIVING_LICENCE"),
+    (r"voter|\bepic\b|election card", "IN_VOTER_ID"),
+    (r"national insurance|\bnino\b|\bni (?:no|number)", "UK_NINO"),
+    (r"blood (?:group|type)|diagnosis|medical condition|disabilit|allerg", "HEALTH_DATA"),
     (r"national id|nat\.? id|national identifier|id number|identity (?:no|number)", "NATIONAL_ID"),
     (r"employee id|emp(?:loyee)? ?(?:no|#|number)|staff id|badge", "EMPLOYEE_ID"),
     (r"(?:home |postal |residential |mailing )?address", "ADDRESS"),
@@ -121,7 +156,26 @@ SENSITIVITY: dict[str, float] = {
     "CREDENTIAL": 10, "US_SSN": 10, "PASSPORT": 10, "NATIONAL_ID": 10, "IN_AADHAAR": 10, "PL_PESEL": 10,
     "CREDIT_CARD": 9, "IBAN_CODE": 8, "IN_PAN": 8, "TAX_ID": 7, "DATE_OF_BIRTH": 6, "ADDRESS": 5,
     "PHONE_NUMBER": 4, "EMAIL_ADDRESS": 4, "PERSON": 3, "IP_ADDRESS": 3, "EMPLOYEE_ID": 3, "VENDOR_ID": 1,
+    "BANK_ACCOUNT": 8, "UPI_ID": 5, "DRIVING_LICENCE": 9, "IN_VOTER_ID": 9, "UK_NINO": 10, "HEALTH_DATA": 9,
     "LOW_CONFIDENCE_OCR": 2, "_default": 3,
+}
+# Special categories (GDPR Art. 9, "sensitive personal data"): flagged in reports.
+SPECIAL_CATEGORIES = {"HEALTH_DATA"}
+
+# Redaction profiles: what replaces a value of each category in every output.
+#   token  a stable pseudonym, reversible through the vault            [PERSON_007]
+#   mask   the category only: nothing of the value, not reversible      [CARD]
+#   last4  the category and the last four digits                        [CARD_****2218]
+#   year   the category and the year (a date of birth generalised)      [DOB_1985]
+# Categories a profile does not name are tokenised.
+PROFILES: dict[str, dict] = {
+    "default": {"label": "Tokenise everything", "actions": {}},
+    "gdpr": {"label": "GDPR: data minimisation",
+             "actions": {"DATE_OF_BIRTH": "year", "HEALTH_DATA": "mask", "CREDENTIAL": "mask"}},
+    "dpdp": {"label": "India DPDP Act: masked Aadhaar",
+             "actions": {"IN_AADHAAR": "last4", "DATE_OF_BIRTH": "year", "HEALTH_DATA": "mask", "CREDENTIAL": "mask"}},
+    "pci": {"label": "PCI DSS: card numbers to last four",
+            "actions": {"CREDIT_CARD": "last4", "BANK_ACCOUNT": "last4", "IBAN_CODE": "last4", "CREDENTIAL": "mask"}},
 }
 EXPOSURE_RATING = {"critical_weight": 9, "high_density": 25.0, "medium_density": 5.0}  # density = score per 1k words
 # Share of instances the detectors miss, by (category, source), measured on the held-out test seed
@@ -159,4 +213,10 @@ CONTEXT_WORDS: dict[str, list[str]] = {
     "IN_AADHAAR": ["aadhaar", "aadhar", "uid", "uidai", "unique id"],
     "IP_ADDRESS": ["ip", "ip address", "host", "server", "client", "source", "login from"],
     "CREDENTIAL": ["key", "api key", "apikey", "secret", "token", "password", "passwd", "pwd", "credential"],
+    "BANK_ACCOUNT": ["account", "a/c", "acct", "bank", "ifsc", "sort code", "routing", "beneficiary", "savings", "current account"],
+    "UPI_ID": ["upi", "vpa", "gpay", "phonepe", "paytm", "bhim"],
+    "DRIVING_LICENCE": ["driving licence", "driving license", "driver's license", "drivers license", "licence no", "license no", "dl no", "dl"],
+    "IN_VOTER_ID": ["voter", "epic", "election"],
+    "UK_NINO": ["national insurance", "nino", "ni number", "ni no"],
+    "HEALTH_DATA": ["blood", "blood group", "blood type"],
 }

@@ -14,7 +14,7 @@ from server.api import app, session
 
 @pytest.fixture(scope="module")
 def client():
-    with TestClient(app) as c:
+    with TestClient(app, base_url="http://127.0.0.1:8000") as c:  # the server refuses any other Host
         yield c
 
 
@@ -101,6 +101,72 @@ def test_downloads_are_limited_to_listed_outputs(client):
     assert gold and not any(v in summary for v in gold)
 
 
+def test_only_this_machines_dashboard_is_answered(client):
+    # DNS rebinding: another site's page reaches 127.0.0.1 but still sends its own name as Host
+    assert client.get("/api/run", headers={"host": "evil.example"}).status_code == 403
+    assert client.get("/api/run", headers={"host": "localhost:8000"}).status_code == 200
+    # a form on any web page can POST here; a request from another origin must change nothing
+    assert client.post("/api/scan/cancel", headers={"origin": "https://evil.example"}).status_code == 403
+    assert client.post("/api/scan", data={"synthetic": "true"}, headers={"sec-fetch-site": "cross-site"}).status_code == 403
+    assert client.get("/api/scan").json()["state"] == "done"
+    r = client.get("/api/run")
+    assert r.headers["cache-control"] == "no-store" and r.headers["x-frame-options"] == "DENY"
+    assert "default-src 'self'" in r.headers["content-security-policy"]
+
+
+def test_masked_page_preview_and_integrity(client):
+    run = client.get("/api/run").json()
+    assert run["integrity"]["ok"] and run["integrity"]["audit_records"] > 50
+    assert run["pipeline"]["verified_pages"] == 3 and run["pipeline"]["verify_on"]
+    assert {o["name"] for o in run["outputs"]["safe"]} >= {"run_manifest.json"}
+    doc = client.get("/api/run/doc", params={"file": "risk_policy_scanned.pdf"}).json()
+    assert doc["masked_preview"]
+    a = client.get("/api/run/page", params={"file": "risk_policy_scanned.pdf", "page": 1})
+    b = client.get("/api/run/page", params={"file": "risk_policy_scanned.pdf", "page": 1, "masked": "true"})
+    assert b.status_code == 200 and b.content[:4] == a.content[:4] and a.content != b.content
+
+
+def test_review_rewrites_outputs_and_rehydrate_is_logged(client):
+    run = client.get("/api/run").json()
+    queued = next(q for q in run["review_queue"] if q["value"] == "tprm-office@cadence-demo.example")
+    person = next(f for f in run["findings"] if f["entity_type"] == "PERSON" and f["decision"] == "redact" and " " in f["text"])
+    body = {"operator": "reviewer-1",
+            "decisions": [{"entity_type": queued["entity_type"], "value": queued["value"], "action": "reject"}],
+            "additions": [{"text": "Vendor Tier", "entity_type": "VENDOR_ID"}]}
+    assert client.post("/api/run/review", json={}).status_code == 422
+    assert client.post("/api/run/review", json={"additions": [{"text": "x1", "entity_type": "NOPE"}]}).status_code == 422
+    r = client.post("/api/run/review", json=body)
+    assert r.status_code == 200 and r.json()["kind"] == "review"
+    s, _ = wait(client, lambda s: s["state"] != "running")
+    assert s["state"] == "done", s
+    after = client.get("/api/run").json()
+    assert not [f for f in after["findings"] if f["text"] == queued["value"]]
+    assert [f for f in after["dropped"] if f["text"] == queued["value"] and f["review"] == "rejected"]
+    added = [f for f in after["findings"] if f["review"] == "added"]
+    assert added and all(f["text"] == "Vendor Tier" and f["layer"] == "L5 reviewer" for f in added)
+    assert after["reviews"][-1]["operator"] == "reviewer-1" and after["integrity"]["ok"]
+    red = client.get("/api/run/doc", params={"file": "tprm_training.docx"}).json()["redacted"]
+    assert queued["value"] in red and "Vendor Tier" not in red
+    # tokens back to values, and the audit log says who asked
+    r = client.post("/api/run/rehydrate", json={"text": f"Ask {person['token']} or [PERSON_999].", "purpose": "test",
+                                                "operator": "reviewer-1"}).json()
+    assert r["restored"] == [person["token"]] and r["unknown"] == ["[PERSON_999]"] and "[PERSON_999]" in r["text"]
+    assert person["token"] not in r["text"]
+    log = client.get("/api/run/output", params={"name": "audit_log.jsonl"}).text.splitlines()
+    last = json.loads(log[-1])
+    assert last["event"] == "reidentification" and last["tokens"] == [person["token"]] and last["operator"] == "reviewer-1"
+    assert client.get("/api/run").json()["integrity"]["ok"]
+
+
+def test_uploads_are_capped(client, monkeypatch):
+    import server.api as api
+
+    monkeypatch.setattr(api, "MAX_UPLOAD", 1024)
+    r = client.post("/api/scan", files=[("files", ("big.txt", b"x" * 5000, "text/plain"))])
+    assert r.status_code == 413
+    assert client.get("/api/scan").json()["state"] == "done"  # nothing was started
+
+
 def test_delete_session(client):
     assert client.delete("/api/session").json() == {"state": "idle"}
     assert client.get("/api/run").status_code == 404
@@ -113,3 +179,5 @@ def test_rejects_unsupported_uploads_and_bad_settings(client):
     r = client.post("/api/scan", data={"synthetic": "true", "settings": json.dumps({"redact_threshold": 2})})
     assert r.status_code == 422
     assert client.get("/api/scan").json()["state"] == "idle"
+    r = client.post("/api/scan", data={"synthetic": "true", "settings": json.dumps({"profile": "nope"})})
+    assert r.status_code == 422

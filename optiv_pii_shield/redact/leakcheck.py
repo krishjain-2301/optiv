@@ -252,7 +252,8 @@ def check_pdf(path, n: Needles, what: str) -> None:
     hits: list[Hit] = []
     with fitz.open(path) as pdf:
         meta = " ".join(v for v in (pdf.metadata or {}).values() if v) + " " + (pdf.get_xml_metadata() or "")
-        for name, text in [("metadata", meta)] + [(f"page {p.number + 1}", p.get_text()) for p in pdf]:
+        toc = " | ".join(entry[1] for entry in pdf.get_toc(simple=True))
+        for name, text in [("metadata", meta), ("bookmarks", toc)] + [(f"page {p.number + 1}", p.get_text()) for p in pdf]:
             for _, _, m in find(text, n):
                 hits.append(Hit(name, n.token_for(m), m))
         for i, link in ((p.number, l) for p in pdf for l in p.get_links()):

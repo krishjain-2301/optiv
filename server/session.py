@@ -13,9 +13,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from optiv_pii_shield import RunResult, Settings, run, workspace
+from optiv_pii_shield import RunResult, Settings, audit, run, workspace
 from optiv_pii_shield.errors import ModelMissing, RunCancelled
-from optiv_pii_shield.pipeline import STAGES, stage_of
+from optiv_pii_shield.pipeline import REVIEW_STAGES, STAGES, _unique, apply_review, stage_of
+from optiv_pii_shield.redact.tokens import rehydrate
+from optiv_pii_shield.review import Addition, Decision
 
 log = logging.getLogger(__name__)
 ACTIVE = ("running", "paused")
@@ -28,6 +30,7 @@ class Busy(RuntimeError):
 @dataclass
 class Job:
     files: list[str]
+    kind: str = "scan"  # scan | review (the redaction stage again, after a reviewer's decisions)
     state: str = "running"  # running | paused | done | failed | cancelled
     fraction: float = 0.0
     message: str = "Preparing files"
@@ -64,14 +67,18 @@ class Job:
         self._cancel.set()
         self._go.set()
 
+    @property
+    def stages(self):
+        return REVIEW_STAGES if self.kind == "review" else STAGES
+
     def status(self) -> dict:
         end = self.finished if self.finished is not None else time.monotonic()
         return {
             "state": self.state, "fraction": round(self.fraction, 4), "message": self.message, "error": self.error,
             "pause_requested": self.pause_requested and self.state == "running",
             "cancel_requested": self._cancel.is_set() and self.state in ACTIVE,
-            "stage": stage_of(self.fraction), "stages": [name for name, _ in STAGES],
-            "elapsed": round(end - self.started, 1), "files": self.files,
+            "stage": stage_of(self.fraction, self.stages), "stages": [name for name, _ in self.stages],
+            "elapsed": round(end - self.started, 1), "files": self.files, "kind": self.kind,
         }
 
 
@@ -83,6 +90,7 @@ class Session:
         self.result: RunResult | None = None
         self.settings: Settings | None = None
         self.gold: Path | None = None
+        self.transcriptions: dict[str, str] = {}  # file -> hand transcription, for structure retention
         self.cache: dict = {}  # payloads derived from the result, dropped with it
 
     # ------------------------------------------------------------------------- lifecycle
@@ -106,6 +114,7 @@ class Session:
 
     def _release(self) -> None:
         self.result, self.settings, self.gold = None, None, None
+        self.transcriptions = {}
         self.cache.clear()
 
     def empty(self) -> None:
@@ -143,7 +152,7 @@ class Session:
             return sorted(p for p in src.iterdir() if p.suffix in (".pdf", ".docx", ".pptx")), src / "gold_labels.csv"
         paths = []
         for name, content in uploads:
-            p = src / Path(name).name
+            p = src / _unique(Path(name).name, {q.name for q in paths})  # two uploads may share a name
             p.write_bytes(content)
             paths.append(p)
         gold_path = None
@@ -174,6 +183,49 @@ class Session:
             job.error, job.state = f"{type(exc).__name__}: {exc}", "failed"
         finally:
             job.finished = time.monotonic()
+
+    # ---------------------------------------------------------------------------- review
+    def review(self, decisions: list[Decision], additions: list[Addition], operator: str | None) -> Job:
+        """Apply a reviewer's decisions and write every output again, as a background job."""
+        with self.lock:
+            if self.job is not None and self.job.state in ACTIVE:
+                raise Busy("a scan is already running")
+            if self.result is None:
+                raise Busy("there is no run to review")
+            self.job = job = Job(files=list(self.result.docs), kind="review", message="Applying decisions")
+        threading.Thread(target=self._review, args=(job, decisions, additions, operator), daemon=True, name="review").start()
+        return job
+
+    def _review(self, job: Job, decisions, additions, operator) -> None:
+        try:
+            apply_review(self.result, decisions, additions, operator, progress=job.progress)
+            with self.lock:
+                self.cache.clear()
+            job.fraction, job.state = 1.0, "done"
+        except RunCancelled:
+            # Outputs were being rewritten: half of them reflect the decisions, half do not.
+            self.empty()
+            job.message, job.state = "Cancelled while rewriting the outputs. The run's files were deleted.", "cancelled"
+        except Exception as exc:
+            log.exception("review failed")
+            self.empty()
+            job.error, job.state = f"{type(exc).__name__}: {exc}", "failed"
+        finally:
+            job.finished = time.monotonic()
+
+    def rehydrate(self, text: str, operator: str | None, purpose: str) -> dict:
+        """Tokens back to values, from the vault held in memory for this run. Logged."""
+        res = self.result
+        out, restored, unknown = rehydrate(text, res.vault.values)
+        audit.AuditLog(self.out / "audit_log.jsonl", res.run_id).append([{
+            "event": "reidentification", "timestamp": audit.now(), "operator": operator or res.settings.operator,
+            "how": "dashboard rehydrate", "tokens": sorted(restored), "count": len(restored), "purpose": purpose}])
+        self.cache.pop("run", None)
+        return {"text": out, "restored": restored, "unknown": unknown}
+
+    def set_transcription(self, file: str, text: str) -> None:
+        self.transcriptions[file] = text
+        self.cache.pop("evaluation", None)
 
     def set_gold(self, content: bytes) -> None:
         self.gold = self.work / "gold.csv"

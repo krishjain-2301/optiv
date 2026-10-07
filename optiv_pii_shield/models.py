@@ -65,10 +65,21 @@ class ImageRef:
 
 
 @dataclass
+class Visual:
+    """Something in a picture that identifies a person without being text: a face, or a QR code
+    (which encodes text nobody can read by eye). It is blanked in the masked copy."""
+
+    kind: str  # face | qr
+    bbox: BBox  # page points (PDF) when image_ref is None, else pixels of that image
+    page: Optional[int] = None
+    image_ref: Optional[str] = None
+
+
+@dataclass
 class Document:
     file: str
     path: str
-    file_type: str  # pdf | docx | pptx | image | text
+    file_type: str  # pdf | docx | pptx | xlsx | image | text | csv | eml
     pages: int = 0
     spans: list[Span] = field(default_factory=list)
     images: list[ImageRef] = field(default_factory=list)
@@ -79,6 +90,9 @@ class Document:
     gate: dict = field(default_factory=dict)  # leak-gate outcome: masked written/withheld, values scrubbed
     page_sizes: dict[int, tuple[float, float]] = field(default_factory=dict)
     page_images: dict[int, bytes] = field(default_factory=dict)  # rendered PNGs for scanned pages
+    visuals: list[Visual] = field(default_factory=list)  # faces and QR codes found in images
+    sha256: str = ""  # digest of the input file, for the run manifest
+    base_warnings: Optional[list[str]] = None  # warnings from extraction, before any redaction pass
 
     def span(self, span_id: str) -> Span:
         return self._index()[span_id]
@@ -99,7 +113,7 @@ class Finding:
     entity_type: str
     score: float
     recognizer: str
-    layer: str  # L1 rules | L2 ner | L3 structure | L4 propagation | L0 fail-closed
+    layer: str  # L1 rules | L2 ner | L3 structure | L4 propagation | L0 fail-closed | L5 leak gate | L5 reviewer
     reasons: list[str] = field(default_factory=list)
     token: Optional[str] = None
     decision: str = "redact"  # redact | review | drop
@@ -108,6 +122,7 @@ class Finding:
     kind: str = ""
     source: str = ""
     context_type: str = ""  # table | labelled | narrative | image | metadata
+    review: str = ""  # approved | rejected | added: what a human reviewer decided
 
     def to_dict(self) -> dict:
         return asdict(self)

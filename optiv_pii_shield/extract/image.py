@@ -4,7 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import Settings
-from ..models import Document, ImageRef
+from ..models import Document, ImageRef, Visual
+from . import visual
 from .common import IdGen, decode_image, image_spans
 
 
@@ -24,6 +25,7 @@ def extract_image(path: str | Path, settings: Settings) -> Document:
     doc.page_sizes[1] = (arr.shape[1], arr.shape[0])
     doc.page_images[1] = blob
     doc.ocr_pages = [1]
+    doc.visuals.extend(Visual(kind, box, 1, ref.id) for kind, box in visual.detect(arr, settings))
     spans, conf = image_spans(arr, settings, ids=ids, file=doc.file, page=1, location="image", image_ref=ref.id)
     ref.ocr_conf = round(conf, 3) if conf is not None else None
     ref.ocr_status = "read" if spans and (conf or 0) >= settings.low_conf_ocr else ("no_text" if not spans else "low_confidence")

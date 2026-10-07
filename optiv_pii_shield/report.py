@@ -9,16 +9,17 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
-from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
 
+from . import audit
+from .config import SPECIAL_CATEGORIES
 from .exposure import file_exposure
 from .models import Document, Finding
 
 COLUMNS = ["file", "page", "location", "kind", "source", "context_type", "entity_type", "text", "token", "score",
-           "decision", "layer", "recognizer", "reasons"]
+           "decision", "layer", "recognizer", "reasons", "review"]
 
 
 def mask_value(v: str) -> str:
@@ -91,6 +92,11 @@ def file_summary(doc: Document, findings: list[Finding]) -> dict:
         "by_context": dict(Counter(f.context_type for f in live).most_common()),
         "by_layer": dict(Counter(f.layer for f in live).most_common()),
         "image_only_values": image_only_values(live),
+        "special_category": sum(f.entity_type in SPECIAL_CATEGORIES for f in live),
+        "visuals": dict(Counter(v.kind for v in doc.visuals)),
+        "verification": doc.gate.get("verified", {"method": "not run", "covered": 0}),
+        "reviewed": dict(Counter(f.review for f in findings if f.review)),
+        "sha256": doc.sha256,
         "warnings": doc.warnings,
         "exposure": (exp := file_exposure(doc, findings)),
         # flat copies for the spreadsheet summary
@@ -113,24 +119,32 @@ def image_only_values(findings: list[Finding]) -> list[dict]:
     return list(out.values())
 
 
-def audit_records(findings: dict[str, list[Finding]], run_id: str) -> list[dict]:
-    ts = datetime.now(timezone.utc).isoformat()
+def audit_records(findings: dict[str, list[Finding]], only=None) -> list[dict]:
+    """One record per finding (kept or dropped), values partially masked. ``only`` filters them."""
+    ts = audit.now()
     recs = []
     values = value_set(findings)
     for fs in findings.values():
         for f in fs:
+            if only is not None and not only(f):
+                continue
             recs.append({
-                "run_id": run_id, "timestamp": ts, "file": f.file, "page": f.page,
+                "event": "finding", "timestamp": ts, "file": f.file, "page": f.page,
                 "location": mask_reasons([f.location], values)[0],
                 "span_id": f.span_id, "start": f.start, "end": f.end, "entity_type": f.entity_type,
                 "value_masked": mask_value(f.text), "token": f.token, "score": f.score, "decision": f.decision,
-                "layer": f.layer, "recognizer": f.recognizer, "reasons": mask_reasons(f.reasons, values),
+                "layer": f.layer, "recognizer": f.recognizer, "review": f.review,
+                "reasons": mask_reasons(f.reasons, values),
             })
     return recs
 
 
 def write_reports(out_dir: Path, docs: dict[str, Document], findings: dict[str, list[Finding]], run_id: str,
-                  components: list[str]) -> dict[str, Path]:
+                  components: list[str], log: audit.AuditLog | None = None, needles=None,
+                  events: list[dict] | None = None, only=None) -> dict[str, Path]:
+    """Register, summary and audit records. The audit log is appended to, never rewritten:
+    ``events`` go in first (run started, review applied), then one record per finding that
+    ``only`` accepts (all of them on the first pass)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = {}
     # The shareable register shows values partially masked; the full register is SENSITIVE (it is
@@ -160,7 +174,15 @@ def write_reports(out_dir: Path, docs: dict[str, Document], findings: dict[str, 
         "files": summaries,
     }, indent=2, default=str), encoding="utf-8")
     paths["audit_log"] = out_dir / "audit_log.jsonl"
-    with open(paths["audit_log"], "w", encoding="utf-8") as fh:
-        for rec in audit_records(findings, run_id):
-            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    log = log or audit.AuditLog(paths["audit_log"], run_id)
+    records = list(events or []) + audit_records(findings, only)
+    records.append({"event": "outputs_written", "timestamp": audit.now(),
+                    "findings": sum(f.decision != "drop" for fs in findings.values() for f in fs),
+                    "dropped": sum(f.decision == "drop" for fs in findings.values() for f in fs)})
+    if needles is not None:
+        # The log is append-only, so it is gated before it is written, not scrubbed afterwards.
+        from .redact.leakcheck import scrub_text
+
+        records = [json.loads(scrub_text(json.dumps(r, ensure_ascii=False, default=str), needles)[0]) for r in records]
+    log.append(records)
     return paths

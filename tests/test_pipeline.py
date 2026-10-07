@@ -23,6 +23,11 @@ def test_all_files_processed(run_result):
     assert len(run_result.docs) == 3
 
 
+def test_the_run_never_touched_the_network(run_result):
+    # conftest blocks sockets and name lookups for the whole run and records every attempt
+    assert run_result.network_attempts == []
+
+
 def test_report_metrics(ev, capsys):
     with capsys.disabled():
         print(f"\n  recall={ev.recall:.3f} category_recall={ev.category_recall:.3f} precision={ev.precision:.3f} precision_auto={ev.precision_auto:.3f} "
@@ -111,5 +116,7 @@ def test_reports_written(run_result):
     summary = json.loads((out / "summary.json").read_text())
     assert {f["file"] for f in summary["files"]} == set(run_result.docs)
     # audit log never holds raw values
-    first = json.loads((out / "audit_log.jsonl").read_text().splitlines()[0])
+    records = [json.loads(line) for line in (out / "audit_log.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert records[0]["event"] == "run_started" and records[-1]["event"] == "outputs_written"
+    first = next(r for r in records if r["event"] == "finding")
     assert "value_masked" in first and "text" not in first

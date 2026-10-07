@@ -20,10 +20,11 @@ from lxml import etree
 from PIL import Image, ImageDraw, ImageFont
 
 from ..config import Settings
-from ..extract.ooxml import W, apply_replacements, docx_units, flush_blob_parts, package_units, pptx_units, xml_root
+from ..extract.ooxml import (W, apply_replacements, docx_units, flush_blob_parts, image_parts, package_units, pptx_units,
+                             xml_root)
 from ..models import Document, Finding, ImageRef, Span
-from .leakcheck import Needles, check_package, check_pdf, find, scrub_package, strip_image_metadata
-from .text import LIVE, merged_ranges
+from .leakcheck import Hit, LeakError, Needles, check_package, check_pdf, find, scrub_package, scrub_text, strip_image_metadata
+from .text import LIVE, apply, merged_ranges
 
 R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 
@@ -85,13 +86,26 @@ def mask_pdf(doc: Document, findings: list[Finding], out: Path, settings: Settin
             r = fitz.Rect(pad(b))
             page.add_redact_annot(r, text=f.token or "", fill=(0, 0, 0), text_color=(1, 1, 1),
                                   fontsize=max(3.5, min(9, r.height * 0.6)), align=fitz.TEXT_ALIGN_LEFT)
+    def withhold(page, rect) -> None:
+        page.add_redact_annot(fitz.Rect(rect), text="[IMAGE WITHHELD]", fill=(0.2, 0.2, 0.2), text_color=(1, 1, 1), fontsize=9)
+
     for img in doc.images:
-        if img.bbox and img.page and (img.ocr_status in WITHHOLD or img.ocr_status == "no_text"):
-            page = pdf[img.page - 1]
-            page.add_redact_annot(fitz.Rect(img.bbox), text="[IMAGE WITHHELD]", fill=(0.2, 0.2, 0.2),
-                                  text_color=(1, 1, 1), fontsize=9)
+        if img.bbox and img.page and _withheld(img, settings):
+            withhold(pdf[img.page - 1], img.bbox)
+    if not settings.ocr_embedded_images:
+        # Pictures were not read at all in this run: none of them is trusted (fail closed).
+        for page in pdf:
+            if page.number + 1 in doc.ocr_pages:
+                continue  # a scanned page is one picture, and it was read
+            for info in page.get_images(full=True):
+                for rect in page.get_image_rects(info[0]):
+                    withhold(page, rect)
+    for v in doc.visuals:
+        if v.image_ref is None and v.page:
+            pdf[v.page - 1].add_redact_annot(fitz.Rect(v.bbox), fill=(0.2, 0.2, 0.2))
     for page in pdf:
         page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_PIXELS)
+    _rewrite_bookmarks(pdf, doc, findings)
     pdf.set_metadata({k: "" for k in ("author", "creator", "producer", "title", "subject", "keywords")})
     pdf.del_xml_metadata()
     pdf.save(out, garbage=4, deflate=True)
@@ -103,6 +117,32 @@ def mask_pdf(doc: Document, findings: list[Finding], out: Path, settings: Settin
             out.unlink(missing_ok=True)
             raise
     return out
+
+
+def _rewrite_bookmarks(pdf, doc: Document, findings: list[Finding]) -> None:
+    ranges = _ranges_by_anchor(doc, findings)
+    toc = pdf.get_toc(simple=True)
+    changed = False
+    for i, entry in enumerate(toc):
+        if f"toc:{i}" in ranges:
+            span = next(s for s in doc.spans if s.anchor == f"toc:{i}")
+            entry[1] = apply(span.text, ranges[f"toc:{i}"])
+            changed = True
+    if changed:
+        pdf.set_toc(toc)
+
+
+def _withheld(img: ImageRef, settings: Settings) -> bool:
+    """Is this picture blanked in the masked copy? Unreadable and badly read pictures always are;
+    pictures with no readable text (photos, signatures, logos) are too unless the setting is off,
+    because nobody read them. Bullets and icons below ``min_blank_px`` are left alone."""
+    if img.ocr_status in WITHHOLD:
+        return True
+    if not settings.blank_textless_images or img.ocr_status == "read":
+        return False
+    if img.ocr_status == "skipped" and img.width and img.height:
+        return min(img.width, img.height) >= settings.min_blank_px
+    return True  # no_text, pending, or a skipped picture of unknown size
 
 
 # ------------------------------------------------------------------------------- DOCX / PPTX
@@ -149,23 +189,33 @@ def _paint_image(blob: bytes, boxes: list, withhold: bool) -> bytes | None:
     return buf.getvalue()
 
 
-def _mask_images(doc: Document, findings: list[Finding], package) -> dict[str, str]:
-    """Paint PII boxes onto embedded images. Returns part names that must be removed (unpaintable)."""
+def _mask_images(doc: Document, findings: list[Finding], package, settings: Settings) -> dict[str, str]:
+    """Paint PII boxes, faces and QR codes onto embedded images, and blank the pictures that were
+    not read. Returns part names that must be removed (unpaintable)."""
     boxes: dict[str, list] = {}
     for f in _live(findings):
         span = doc.span(f.span_id)
         if span.image_ref:
             boxes.setdefault(span.image_ref, []).extend(finding_boxes(span, f))
+    for v in doc.visuals:
+        if v.image_ref:
+            boxes.setdefault(v.image_ref, []).append(v.bbox)
     refs: dict[str, ImageRef] = {i.id: i for i in doc.images}
     by_part: dict[str, tuple[list, bool]] = {}
     for rid, ref in refs.items():
         if not ref.part_name:
             continue
-        withhold = ref.ocr_status in WITHHOLD
         b, w = by_part.get(ref.part_name, ([], False))
-        by_part[ref.part_name] = (b + boxes.get(rid, []), w or withhold)
+        by_part[ref.part_name] = (b + boxes.get(rid, []), w or _withheld(ref, settings))
     remove: dict[str, str] = {}
     parts = {str(p.partname): p for p in package.iter_parts()}
+    if settings.blank_textless_images or not settings.ocr_embedded_images:
+        # A picture the extractor never looked at (on a layout or master, a shape fill, or every
+        # picture when image OCR is off) is blanked as well.
+        for part in image_parts(package):
+            name = str(part.partname)
+            if name not in by_part and _big_enough(part.blob, settings):
+                by_part[name] = ([], True)
     for name, (bx, withhold) in by_part.items():
         if not bx and not withhold:
             continue
@@ -181,6 +231,14 @@ def _mask_images(doc: Document, findings: list[Finding], package) -> dict[str, s
         if ref.part_name and ref.ocr_status == "unreadable":
             remove[ref.part_name] = "unreadable"
     return remove
+
+
+def _big_enough(blob: bytes, settings: Settings) -> bool:
+    try:
+        with Image.open(io.BytesIO(blob)) as img:
+            return min(img.size) >= settings.min_blank_px
+    except Exception:
+        return True  # vector or undecodable: cannot be painted, so it is removed
 
 
 def _remove_pictures(package, part_names: dict[str, str]) -> int:
@@ -349,7 +407,7 @@ def mask_docx(doc: Document, findings: list[Finding], out: Path, settings: Setti
     pkg = d.part.package
     ranges = _ranges_by_anchor(doc, findings)
     _rewrite_units(list(docx_units(d)) + list(package_units(pkg)), ranges)
-    _remove_pictures(pkg, _mask_images(doc, findings, pkg))
+    _remove_pictures(pkg, _mask_images(doc, findings, pkg, settings))
     _clear_core(d.core_properties)
     _sanitise_package(pkg)
     return _write_package(doc, d.save, out, needles)
@@ -362,7 +420,7 @@ def mask_pptx(doc: Document, findings: list[Finding], out: Path, settings: Setti
     pkg = prs.part.package
     ranges = _ranges_by_anchor(doc, findings)
     _rewrite_units(list(pptx_units(prs)) + list(package_units(pkg)), ranges)
-    _remove_pictures(pkg, _mask_images(doc, findings, pkg))
+    _remove_pictures(pkg, _mask_images(doc, findings, pkg, settings))
     _clear_core(prs.core_properties)
     _sanitise_package(pkg)
     return _write_package(doc, prs.save, out, needles)
@@ -378,7 +436,6 @@ def mask_xlsx(doc: Document, findings: list[Finding], out: Path, settings: Setti
     from openpyxl.comments import Comment
 
     from ..extract.xlsx import HEADER_PARTS, walk
-    from .text import apply
 
     wb = openpyxl.load_workbook(doc.path, data_only=False)
     ranges = _ranges_by_anchor(doc, findings)
@@ -418,18 +475,99 @@ def mask_xlsx(doc: Document, findings: list[Finding], out: Path, settings: Setti
 
 def mask_image(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
     boxes = [b for f in _live(findings) for b in finding_boxes(doc.span(f.span_id), f)]
-    withhold = any(i.ocr_status in WITHHOLD for i in doc.images)
+    boxes += [v.bbox for v in doc.visuals]
+    withhold = any(_withheld(i, settings) for i in doc.images)
     new = _paint_image(Path(doc.path).read_bytes(), boxes, withhold)
-    out = out.with_suffix(".png") if new is None or not out.suffix else out
-    out.write_bytes(new or b"")
+    if new is None:
+        raise LeakError(out.name, [Hit("image", "[IMAGE WITHHELD]", "the image could not be decoded, so it cannot be masked")])
+    out.write_bytes(new)
     return out
 
 
+def _write_text(doc: Document, text: str, out: Path, needles: Needles | None) -> Path:
+    """Text-based masked copies get the same gate: scrub what is left, refuse if anything survives."""
+    if needles is not None:
+        text, n = scrub_text(text, needles)
+        doc.gate["masked_scrubbed"] = n
+        hits = [Hit("text", needles.token_for(m), m) for _, _, m in find(text, needles)]
+        if hits:
+            raise LeakError(out.name, hits)
+    out.write_text(text, encoding="utf-8", newline="")
+    return out
+
+
+def _new_by_anchor(doc: Document, findings: list[Finding]) -> dict[str, str]:
+    by_anchor = {s.anchor: s for s in doc.spans if s.anchor}
+    return {a: apply(by_anchor[a].text, r) for a, r in _ranges_by_anchor(doc, findings).items()}
+
+
+def mask_text(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
+    from ..extract import plain
+
+    new = _new_by_anchor(doc, findings)
+    paras = [new.get(f"p[{i}]", p) for i, p in enumerate(plain.read_text(Path(doc.path)))]
+    return _write_text(doc, plain.build_text(paras), out, needles)
+
+
+def mask_csv(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
+    from ..extract import plain
+
+    new = _new_by_anchor(doc, findings)
+    rows, dialect = plain.read_csv(Path(doc.path))
+    rows = [[new.get(plain.csv_anchor(ri, ci), cell) for ci, cell in enumerate(row)] for ri, row in enumerate(rows)]
+    return _write_text(doc, plain.build_csv(rows, dialect), out, needles)
+
+
+def mask_eml(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
+    from ..extract import plain
+
+    return _write_text(doc, plain.build_eml(plain.read_eml(Path(doc.path)), _new_by_anchor(doc, findings)), out, needles)
+
+
+MASKERS = {"pdf": mask_pdf, "docx": mask_docx, "pptx": mask_pptx, "xlsx": mask_xlsx, "image": mask_image,
+           "text": mask_text, "csv": mask_csv, "eml": mask_eml}
+
+
+def masked_path(doc: Document, out_dir: Path) -> Path:
+    ext = Path(doc.file).suffix or (".txt" if doc.file_type == "text" else f".{doc.file_type}")
+    if doc.file_type == "image" and ext.lower() not in (".png", ".jpg", ".jpeg"):
+        ext = ".png"  # masked pictures are written as PNG or JPEG
+    return out_dir / f"{Path(doc.file).stem}.masked{ext}"
+
+
+def _verify(doc: Document, out: Path, settings: Settings, needles: Needles, tick) -> dict:
+    from . import verify
+
+    if doc.file_type == "pdf":
+        return verify.verify_pdf(doc, out, settings, needles, tick)
+    if doc.file_type in ("docx", "pptx"):
+        data = out.read_bytes()
+        new, summary = verify.verify_package(doc, data, settings, needles, tick)
+        if new is not data:
+            out.write_bytes(new)
+        return summary
+    if doc.file_type == "image":
+        return verify.verify_image(doc, out, settings, needles, tick)
+    return {"method": "text search", "covered": 0}  # no pictures in this format's masked copy
+
+
 def write_masked(doc: Document, findings: list[Finding], out_dir: Path, settings: Settings,
-                 needles: Needles | None = None) -> Path | None:
-    stem = Path(doc.file).stem
-    fn = {"pdf": mask_pdf, "docx": mask_docx, "pptx": mask_pptx, "xlsx": mask_xlsx, "image": mask_image}.get(doc.file_type)
+                 needles: Needles | None = None, tick=None) -> Path | None:
+    """Mask, gate, then (``Settings.verify_outputs``) read the result again as pictures. ``tick(msg)``
+    is called per page or picture verified. Raises LeakError when the file must be withheld."""
+    fn = MASKERS.get(doc.file_type)
     if fn is None:
         return None
-    ext = Path(doc.file).suffix or f".{doc.file_type}"
-    return fn(doc, findings, out_dir / f"{stem}.masked{ext}", settings, needles)
+    out = fn(doc, findings, masked_path(doc, out_dir), settings, needles)
+    if needles is None or not settings.verify_outputs:
+        doc.gate["verified"] = {"method": "off", "covered": 0}
+        return out
+    try:
+        doc.gate["verified"] = summary = _verify(doc, out, settings, needles, tick)
+    except Exception:
+        out.unlink(missing_ok=True)
+        raise
+    if summary.get("covered"):
+        doc.warnings.append(f"verification re-read the masked copy and covered {summary['covered']} place(s) "
+                            "where a value was still readable")
+    return out

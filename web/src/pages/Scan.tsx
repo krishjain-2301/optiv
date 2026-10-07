@@ -3,12 +3,13 @@ import { ArrowRight, FlaskConical, Pause, Play, Square, Upload, X } from "lucide
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Select, Slider, Toggle } from "../components/controls";
-import { Card, Kpis, Notice, PageHeader, Row, Steps, useStep } from "../components/ui";
-import { DECISION_COLOR, NEUTRAL } from "../lib/entities";
+import { Card, Chip, Kpis, Notice, PageHeader, Row, Steps, useStep } from "../components/ui";
+import { DECISION_COLOR, NEUTRAL, pretty } from "../lib/entities";
 import { clock, fileSize, percent } from "../lib/format";
 import { isActive, useStore } from "../store";
 
-const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp";
+const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt,.csv,.tsv,.eml";
+const ACTION: Record<string, string> = { mask: "category only", last4: "last four digits", year: "year only", token: "stable token" };
 const lines = (text: string) => text.split("\n").map((x) => x.trim()).filter(Boolean);
 
 function Sources() {
@@ -21,7 +22,7 @@ function Sources() {
   };
   return (
     <Row cols="3fr 2fr">
-      <Card title="Artifacts" sub="PDF (text or scanned), DOCX, PPTX, XLSX and images">
+      <Card title="Artifacts" sub="PDF (text or scanned), DOCX, PPTX, XLSX, images, e-mail (.eml), CSV and text">
         <label className={over ? "drop over" : "drop"}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
           onDragLeave={() => setOver(false)}
@@ -63,19 +64,27 @@ function Sources() {
 }
 
 function Policy() {
-  const { settings: s, setSettings } = useStore();
+  const { settings: s, setSettings, meta } = useStore();
+  const profile = meta.profiles.find((p) => p.name === s.profile);
+  const actions = Object.entries(profile?.actions ?? {});
   return (
     <Row>
       <div className="stack-v">
         <Card title="Extraction" sub="How text is read out of scans and embedded images">
           <Select label="OCR engine" value={s.ocr_engine} onChange={(v) => setSettings({ ocr_engine: v as typeof s.ocr_engine })}
             options={["auto", "rapidocr", "tesseract"].map((v) => ({ value: v, label: v }))} />
-          <Toggle label="OCR embedded images and screenshots" checked={s.ocr_embedded_images} onChange={(v) => setSettings({ ocr_embedded_images: v })} />
+          <Toggle label="OCR embedded images and screenshots (off: every picture is blanked)" checked={s.ocr_embedded_images} onChange={(v) => setSettings({ ocr_embedded_images: v })} />
+          <Toggle label="Find faces and QR codes in pictures, and blank them" checked={s.detect_faces} onChange={(v) => setSettings({ detect_faces: v })} />
           <Slider label="Low OCR confidence (fail closed below)" min={0.3} max={0.9} value={s.low_conf_ocr} onChange={(v) => setSettings({ low_conf_ocr: v })} />
         </Card>
         <Card title="Detection layers" sub="Rules, NER and structure always run; these are optional">
           <Toggle label="Propagate confirmed people across files (L4)" checked={s.propagate_persons} onChange={(v) => setSettings({ propagate_persons: v })} />
           <Toggle label="Add the GLiNER-PII model (slower; more names, more false positives)" checked={s.use_gliner} onChange={(v) => setSettings({ use_gliner: v })} />
+        </Card>
+        <Card title="Masked copies" sub="What is done before a masked file is released">
+          <Toggle label="Blank pictures that hold no readable text (photos, signatures, logos)" checked={s.blank_textless_images} onChange={(v) => setSettings({ blank_textless_images: v })} />
+          <Toggle label="Verify: OCR every masked page and picture again and search it for the values" checked={s.verify_outputs} onChange={(v) => setSettings({ verify_outputs: v })} />
+          <p className="muted">Verification roughly doubles the OCR time. Without it, masks on scanned pages are not checked.</p>
         </Card>
         <Card title="Token vault" sub="Token → original value, for authorised re-identification">
           <label className="field">
@@ -84,6 +93,12 @@ function Policy() {
               onChange={(e) => setSettings({ vault_passphrase: e.target.value || null })} />
           </label>
           <p className="muted">With a passphrase the vault is saved encrypted (AES-256-GCM). Without one it is not saved at all.</p>
+          <label className="field">
+            <span className="field-label">Token key (optional)</span>
+            <input className="input" type="password" autoComplete="new-password" value={s.token_key ?? ""}
+              onChange={(e) => setSettings({ token_key: e.target.value || null })} />
+          </label>
+          <p className="muted">With a key, tokens are derived from the value (HMAC-SHA256): the same person gets the same token in every run. Without one they are numbered per run.</p>
         </Card>
       </div>
       <div className="stack-v">
@@ -97,6 +112,17 @@ function Policy() {
           </div>
           <div className="band-scale"><span>score 0</span><span>{s.review_threshold.toFixed(2)}</span><span>{s.redact_threshold.toFixed(2)}</span><span>1</span></div>
           <p className="muted">Review-band findings are redacted too, and queued for a human (fail closed).</p>
+        </Card>
+        <Card title="Redaction profile" sub="What replaces each category in every output">
+          <Select label="Profile" value={s.profile} onChange={(v) => setSettings({ profile: v })}
+            options={(meta.profiles.length ? meta.profiles : [{ name: s.profile, label: s.profile }]).map((p) => ({ value: p.name, label: p.label }))} />
+          <div className="chips">
+            {actions.length ? actions.map(([cat, action]) => <Chip key={cat} label={pretty(cat)} value={ACTION[action] ?? action} />) : <Chip label="Every category" value="stable token" />}
+          </div>
+          <label className="field">
+            <span className="field-label">Operator (recorded in the manifest and audit log)</span>
+            <input className="input" value={s.operator ?? ""} placeholder={meta.default_operator} onChange={(e) => setSettings({ operator: e.target.value || null })} />
+          </label>
         </Card>
         <Card title="Vocabulary" sub="One entry per line">
           <label className="field">
@@ -113,18 +139,21 @@ function Policy() {
   );
 }
 
-function Progress() {
+export function Progress() {
   const { scan, pause, resume, cancel } = useStore();
   const paused = scan.state === "paused";
+  const review = scan.kind === "review";
   const state = scan.cancel_requested ? "Cancelling…" : paused ? "Paused" : scan.pause_requested ? "Pausing after the current step…" : "Running";
   return (
-    <Card title={paused ? "Scan paused" : "Scan in progress"}
-      sub="The scan runs on the server: you can open other pages meanwhile. Pause and Cancel take effect at the next page or file.">
+    <Card title={review ? (paused ? "Rewriting paused" : "Writing the outputs again") : paused ? "Scan paused" : "Scan in progress"}
+      sub={review
+        ? "The reviewer's decisions are being applied on the server. Cancelling leaves the outputs half rewritten, so it deletes the run."
+        : "The scan runs on the server: you can open other pages meanwhile. Pause and Cancel take effect at the next page or file."}>
       <div className="inline">
         {paused || scan.pause_requested
           ? <button className="btn" onClick={resume} disabled={scan.cancel_requested}><Play size={16} /> Resume</button>
           : <button className="btn" onClick={pause} disabled={scan.cancel_requested}><Pause size={16} /> Pause</button>}
-        <button className="btn danger" onClick={cancel} disabled={scan.cancel_requested}><Square size={15} /> Cancel scan</button>
+        <button className="btn danger" onClick={cancel} disabled={scan.cancel_requested}><Square size={15} /> {review ? "Cancel and delete the run" : "Cancel scan"}</button>
         <span className="muted">{scan.files.join(", ")}</span>
       </div>
       <div className="flow">
@@ -158,8 +187,10 @@ function RunStep() {
         { label: "OCR engine", value: s.ocr_engine, sub: `embedded images ${s.ocr_embedded_images ? "on" : "off"}` },
         { label: "Auto-redact at", value: `≥ ${s.redact_threshold.toFixed(2)}`, sub: `review band from ${s.review_threshold.toFixed(2)}` },
         { label: "Optional layers", value: layers.length, sub: layers.join(" · ") || "none" },
+        { label: "Verification", value: s.verify_outputs ? "On" : "Off", status: s.verify_outputs ? "good" : "serious", sub: s.verify_outputs ? "masked copies re-read by OCR" : "masks on scans not checked" },
         { label: "Token vault", value: s.vault_passphrase ? "Encrypted" : "Not saved", sub: s.vault_passphrase ? "AES-256-GCM" : "no passphrase set" },
       ]} />
+      {active && scan.kind === "review" && <Notice kind="info">A review is being applied to the current run. A new scan can start when it has finished.</Notice>}
       {active ? <Progress /> : (
         <Card title="Run the pipeline" sub="Extract → detect → tokenise → redact → leak gate → report. A new run deletes the previous run's files.">
           <div className="inline">
@@ -183,7 +214,7 @@ export default function Scan() {
   const active = isActive(scan);
   const wasActive = useRef(active);
   useEffect(() => {
-    if (wasActive.current && scan.state === "done") navigate("/overview"); // the scan this page was showing finished
+    if (wasActive.current && scan.state === "done" && scan.kind === "scan") navigate("/overview"); // the scan this page was showing finished
     wasActive.current = active;
   }, [active, scan.state, navigate]);
 

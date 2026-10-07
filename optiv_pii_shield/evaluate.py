@@ -291,5 +291,6 @@ def gold_template(findings: dict[str, list[Finding]], path: str | Path) -> Path:
             for f in fs:
                 if f.decision in ("redact", "review"):
                     w.writerow({"file": f.file, "page": f.page or "", "text": f.text, "category": f.entity_type,
-                                "context_type": f.context_type, "note": "auto - verify"})
+                                "context_type": f.context_type,
+                                "note": f"reviewer: {f.review}" if f.review else "auto - verify"})
     return Path(path)

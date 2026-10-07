@@ -12,7 +12,8 @@ from pathlib import Path
 import docx
 
 from ..config import Settings
-from ..models import Document, ImageRef, Span
+from ..models import Document, ImageRef, Span, Visual
+from . import visual
 from .common import IdGen, decode_image, image_spans
 from .ooxml import TextUnit, docx_units, image_parts, package_units
 from .vector import svg_text
@@ -81,6 +82,7 @@ def ocr_part(part, doc: Document, ids: IdGen, settings: Settings, page, location
     if min(arr.shape[:2]) < settings.min_image_px:
         ref.ocr_status = "skipped"
         return []
+    doc.visuals.extend(Visual(kind, box, page, ref.id) for kind, box in visual.detect(arr, settings))
     # Word boxes stay in image pixels so the masking step can paint over them on the image itself.
     spans, conf = image_spans(arr, settings, ids=ids, file=doc.file, page=page, location=ref.location,
                               image_ref=ref.id, scale=scale, dx=dx, dy=dy)

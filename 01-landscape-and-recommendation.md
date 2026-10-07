@@ -3,6 +3,17 @@
 
 *Prepared 30 Sep 2026 for the Optiv VIT case study. Presentation date is 14 Oct 2026.*
 
+> **Status: decision record, not current documentation.** This is the analysis written before the build. Option C
+> was built; some choices below changed along the way. The current behaviour is in [`README.md`](README.md).
+>
+> | Written here | What was built |
+> |---|---|
+> | Streamlit or a notebook as the demo surface (§5, §6) | A FastAPI server with a React dashboard |
+> | Tesseract first, PaddleOCR if needed (§6) | RapidOCR (PP-OCR on ONNX Runtime) with the English model; Tesseract optional |
+> | L5: optional local LLM verifier (§5) | Not built. "L5" in the code is the leak gate and the human reviewer |
+> | A fail-closed gate on OCR confidence (§5) | That, plus a text leak gate and a re-OCR verification of every masked copy |
+> | §6 and §7 (open decisions, timeline) | Historical |
+
 ---
 
 ## 1. What the brief actually grades

@@ -8,16 +8,14 @@ confidences, so everything downstream is engine-agnostic.
 from __future__ import annotations
 
 import logging
-import os
 import shutil
 from dataclasses import dataclass, field
 from functools import lru_cache
-from pathlib import Path
 from typing import Optional
 
 import numpy as np
 
-from ..errors import ModelMissing
+from .. import modelstore
 
 log = logging.getLogger(__name__)
 
@@ -82,15 +80,6 @@ class OcrEngine:
         raise NotImplementedError
 
 
-MODELS_DIR = Path(__file__).resolve().parents[2] / "models"
-EN_REC_MODEL = "en_PP-OCRv3_rec_infer.onnx"
-
-
-def english_rec_model() -> Optional[Path]:
-    p = Path(os.environ.get("PII_SHIELD_REC_MODEL", MODELS_DIR / EN_REC_MODEL))
-    return p if p.exists() else None
-
-
 class RapidOcrEngine(OcrEngine):
     """PP-OCR on ONNX Runtime.
 
@@ -106,12 +95,9 @@ class RapidOcrEngine(OcrEngine):
     def __init__(self) -> None:
         from rapidocr_onnxruntime import RapidOCR
 
-        rec = english_rec_model()
-        if rec is None:
-            # The bundled recogniser drops spaces between words ("PriyaRaman"), which hides names
-            # from NER: not an acceptable silent fallback.
-            raise ModelMissing("English OCR model not found. Run `python scripts/fetch_models.py` "
-                               "(one-time 9 MB download) or set PII_SHIELD_REC_MODEL.")
+        # The bundled recogniser drops spaces between words ("PriyaRaman"), which hides names
+        # from NER: not an acceptable silent fallback. locate() raises ModelMissing.
+        rec = modelstore.locate(modelstore.OCR_EN)
         self._engine = RapidOCR(rec_model_path=str(rec), use_cls=False)
         self.model = rec.stem
 

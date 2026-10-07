@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Optional
 
 import spacy
 from presidio_analyzer import AnalysisExplanation, EntityRecognizer, RecognizerResult
@@ -79,8 +78,9 @@ def gliner_extent(etype: str, text: str, start: int, end: int) -> tuple[int, int
 class GlinerRecognizer(EntityRecognizer):
     """Zero-shot PII NER (knowledgator/gliner-pii-*). Scores are the model's own probabilities."""
 
-    def __init__(self, model_name: str, threshold: float = 0.45):
+    def __init__(self, model_name: str, threshold: float = 0.45, revision: str | None = None):
         self.model_name = model_name
+        self.revision = revision
         self.threshold = threshold
         self.model = None
         super().__init__(supported_entities=sorted(set(GLINER_LABELS.values())), name="GLiNER",
@@ -90,7 +90,7 @@ class GlinerRecognizer(EntityRecognizer):
         from gliner import GLiNER  # optional dependency
 
         # Cached weights only: a run never contacts the model hub (scripts/fetch_models.py --gliner).
-        self.model = GLiNER.from_pretrained(self.model_name, local_files_only=True)
+        self.model = GLiNER.from_pretrained(self.model_name, revision=self.revision, local_files_only=True)
 
     def analyze(self, text, entities, nlp_artifacts=None) -> list[RecognizerResult]:
         if not text.strip() or self.model is None:
@@ -114,10 +114,10 @@ class GlinerRecognizer(EntityRecognizer):
         return out
 
 
-def load_gliner(model_name: str, threshold: float) -> GlinerRecognizer:
+def load_gliner(model_name: str, threshold: float, revision: str | None = None) -> GlinerRecognizer:
     """GLiNER was asked for, so it must load: a missing package or uncached weights is an error."""
     try:
-        return GlinerRecognizer(model_name, threshold)  # Presidio calls load() in __init__
+        return GlinerRecognizer(model_name, threshold, revision)  # Presidio calls load() in __init__
     except Exception as exc:  # missing package, no weights cached and offline, ...
         raise ModelMissing(f"GLiNER model '{model_name}' could not be loaded ({exc}). "
                            "Install it (`pip install gliner`, then cache the weights once) or turn GLiNER off.") from exc

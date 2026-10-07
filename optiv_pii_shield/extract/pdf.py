@@ -11,7 +11,8 @@ import pymupdf as fitz
 import numpy as np
 
 from ..config import Settings
-from ..models import Document, ImageRef, Span, Word
+from ..models import Document, ImageRef, Span, Visual, Word
+from . import visual
 from .common import IdGen, clean, decode_image, image_spans, span_from_lines
 from .layout import (_overlap, assign_words_to_cells, find_captioned_figures, find_header_bar_tables, find_image_regions, find_tables, group_blocks, inside,
                      is_screenshot_grid)
@@ -27,10 +28,15 @@ def extract_pdf(path: str | Path, settings: Settings, on_page=None) -> Document:
     ids = IdGen(path.stem[:12])
     pdf = fitz.open(path)
     try:
+        if pdf.needs_pass:
+            raise ValueError(f"{path.name} is password-protected; it cannot be read, so nothing is passed on")
+        if pdf.page_count > settings.max_pages:
+            raise ValueError(f"{path.name} has {pdf.page_count} pages; the limit is {settings.max_pages} (Settings.max_pages)")
         doc.pages = pdf.page_count
         counts = {"pages": pdf.page_count, "headings": 0, "paragraphs": 0, "tables": 0, "rows": 0, "cells": 0,
                   "images": 0}
         _metadata_spans(pdf, doc, ids)
+        _bookmark_spans(pdf, doc, ids)
         for pno in range(pdf.page_count):
             page = pdf[pno]
             doc.page_sizes[pno + 1] = (page.rect.width, page.rect.height)
@@ -57,6 +63,22 @@ def _metadata_spans(pdf: fitz.Document, doc: Document, ids: IdGen) -> None:
             doc.spans.append(Span(id=ids(), file=doc.file, text=val, kind="metadata", location=f"metadata: {key}",
                                   header="producing application" if key in ("creator", "producer") else key,
                                   anchor=f"meta:{key}"))
+
+
+def _bookmark_spans(pdf: fitz.Document, doc: Document, ids: IdGen) -> None:
+    """Bookmark titles ("Appendix C - R. Mendoza record") are text a reader sees in the side panel
+    and a parser reads from the outline; they are detected and rewritten like any other text."""
+    for i, (_level, title, page, *_rest) in enumerate(pdf.get_toc(simple=True)):
+        title = clean(title or "")
+        if title:
+            doc.spans.append(Span(id=ids(), file=doc.file, text=title, kind="bookmark", anchor=f"toc:{i}",
+                                  location=f"bookmark {i + 1} (to page {page})"))
+
+
+def _add_visuals(doc: Document, arr, settings: Settings, page, scale: float = 1.0, dx: float = 0.0, dy: float = 0.0,
+                 image_ref=None) -> None:
+    for kind, (x0, y0, x1, y1) in visual.detect(arr, settings):
+        doc.visuals.append(Visual(kind, (x0 * scale + dx, y0 * scale + dy, x1 * scale + dx, y1 * scale + dy), page, image_ref))
 
 
 # --------------------------------------------------------------------------- native pages
@@ -118,11 +140,13 @@ def _native_page(page, pno, doc, ids, settings, counts):
                            bbox=tuple(rects[0]))
             doc.images.append(ref)
             counts["images"] += 1
+            if arr is not None:
+                ref.height, ref.width = arr.shape[:2]
             if arr is None or min(arr.shape[:2]) < settings.min_image_px:
                 ref.ocr_status = "unreadable" if arr is None else "skipped"
                 continue
-            ref.height, ref.width = arr.shape[:2]
             r = rects[0]
+            _add_visuals(doc, arr, settings, pno, r.width / arr.shape[1], r.x0, r.y0)
             spans, conf = image_spans(arr, settings, ids=ids, file=doc.file, page=pno, location=ref.location,
                                       image_ref=ref.id, scale=r.width / arr.shape[1], dx=r.x0, dy=r.y0)
             _set_status(ref, conf, spans, settings)
@@ -156,6 +180,7 @@ def _scanned_page(page, pno, doc, ids, settings, counts):
     preview = page.get_pixmap(dpi=100)
     doc.page_images[pno] = preview.tobytes("png")
     engine = get_engine(settings.ocr_engine)
+    _add_visuals(doc, img, settings, pno, scale)
 
     lines = engine.read(img)
     tables, regions = page_layout(img, lines, settings)

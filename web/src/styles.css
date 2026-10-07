@@ -345,3 +345,11 @@ input[type="range"] { accent-color: var(--accent); width: 100%; }
   .main > *, .kpi, .nav-link, .btn { animation: none; transition: none; }
   .stage.active .pulse, .progress i { animation: none; }
 }
+
+/* ------------------------------------------------------------------ review and previews */
+.decide { display: inline-flex; gap: 0.35rem; white-space: nowrap; }
+.seg { display: inline-flex; gap: 0.3rem; margin-left: auto; }
+.btn.on { border-color: var(--accent); color: var(--ink); background: var(--surface-3); }
+.btn.on.good { border-color: var(--good); }
+.btn.on.bad { border-color: var(--critical); }
+textarea.input { width: 100%; resize: vertical; font-family: var(--mono); font-size: 0.85rem; }
