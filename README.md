@@ -244,9 +244,20 @@ what gets sent. The answer is pasted back and its tokens become values again.
 
 - **One conversation, one set of tokens.** A person or value keeps its token from one prompt to the next, and
   a person redacted once is looked for in every later prompt, by surname alone too.
-- **Only issued tokens are restored.** A token this conversation did not issue is left as it is.
-- **Nothing is stored.** No prompt or answer is kept. Tokens and their values live in memory until the
-  server stops or the conversation is forgotten; the log holds counts, never text.
+- **Only issued tokens are restored.** A token this conversation did not issue is left as it is. A token the
+  model wrote differently (`[Person 001]`, `PERSON-001`) is recognised and restored.
+- **The answer is inspected too.** When an answer is restored it also goes through detection. Two things are
+  reported: a value that had only been sent as a token and is in the answer all the same (the model learned
+  it some other way), and personal data or credentials that came from nowhere in the conversation (the model
+  produced them). The answer is never changed.
+- **No text is stored.** No prompt or answer is kept. Tokens and their values live in memory until the
+  server stops or the conversation is forgotten.
+- **What it did is recorded.** Every check and every restoration is appended to a hash-chained record:
+  when, who, the outcome, why a prompt was refused, how many values of which category. Counts only, never
+  text. **Assurance → Guard activity** reads it back: totals, per operator, per day, per rule, per category,
+  and whether the record is intact. It outlives the server, the session and a forgotten conversation
+  (`$PII_SHIELD_GUARD_LOG`, else `~/.pii_shield/guard_log.jsonl`). The operator's name is recorded as given:
+  there is no login.
 - **Some prompts are refused, not redacted.** Replacing values is not always enough, so a policy decides when
   the whole prompt is blocked. A blocked prompt yields no text to send, issues no tokens and is counted in the
   log. The policy is set in `org.yaml` (`guard_policy`) and can be changed in the page's Policy step.
@@ -323,6 +334,7 @@ see [Held-out set](#held-out-set).
 | `PII_SHIELD_TOKEN_KEY` | Key for stable tokens across runs |
 | `PII_SHIELD_SIGNING_KEY` | Path of an Ed25519 private key (`keygen`); set: run manifests are signed |
 | `PII_SHIELD_ORG_CONFIG` | Another organisation vocabulary file |
+| `PII_SHIELD_GUARD_LOG` | Where the prompt guard's record is kept (default `~/.pii_shield/guard_log.jsonl`) |
 | `PII_SHIELD_REGISTRY` | Where the registry of protected documents is kept (default `~/.pii_shield/registry.json`) |
 | `PII_SHIELD_MAX_UPLOAD_MB` | Dashboard upload limit for one scan (default 300) |
 | `PII_SHIELD_REC_MODEL`, `PII_SHIELD_FACE_MODEL` | Another copy of a model file (its digest is then not checked) |
@@ -351,6 +363,7 @@ background thread; the page shows its stage, page-by-page progress and elapsed t
 | Assurance | Review | Review queue, Add missed, Apply (outputs are written again) |
 | | Evaluation | Gold labels, Scores, Errors, Structure retention (upload a hand transcription for scans) |
 | | Reports | Shareable, Sensitive, Session |
+| | Guard activity | Summary, People and data, Record |
 
 **Developing the UI.** Run `python app.py --no-browser` and `npm run dev` in `web/` for hot reload on
 <http://localhost:5173>; it forwards `/api` to the Python server. Charts are plain HTML/SVG
@@ -517,7 +530,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 236 tests, a few minutes on CPU
+pytest -q            # 249 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -542,6 +555,8 @@ cd web; npm run typecheck
   whatever its case and layout; a paraphrase is not; the guard refuses, warns or allows; the registry over HTTP.
 - **Transcripts** (`tests/test_transcript.py`): cues and speakers read from `.vtt` and `.srt`; masked copies keep
   their timings; a speaker is the same token in both files; speaker labels in pasted text.
+- **Guard record and answers** (`tests/test_guard_record.py`): rewritten tokens are recognised; an answer's
+  echoed and produced values are reported; every event is recorded without text; a removed line is detected.
 - **Replay** (`tests/test_replay.py`): the outcome of each Samsung scenario under the cap and under the guard.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
@@ -567,7 +582,8 @@ optiv_pii_shield/
   redact/              tokens (vault, keyed tokens, profiles, rehydrate), text (LLM output), files (masked
                        copies), leakcheck (text gate), verify (re-OCR of masked copies)
   review.py            review queue, reviewer decisions and additions
-  guard.py             prompt guard: a prompt's values replaced by tokens, and the answer's put back
+  guard.py             prompt guard: a prompt's values replaced by tokens, the answer's put back and
+                       inspected, and the record of what was checked
   registry.py          protected content: documents registered by fingerprint, and what a text overlaps
   replay.py            the Samsung incidents of 2023 under a size cap and under the guard
   audit.py             hash-chained audit log, run manifest, signing, verify-run
@@ -587,7 +603,7 @@ web/                   React + TypeScript dashboard (Vite)
   src/store.tsx        app state: current run, job in progress, scan settings, queued files
   src/components/      header, step bar, stat tiles, cards, charts, table, form controls
   src/pages/           one file per mode: Scan, Guard, Overview, Exposure, Findings, Extraction, Redaction,
-                       Review, Evaluation, Reports
+                       Review, Evaluation, Reports, Activity
   src/lib/entities.ts  entity labels, category groups and chart colours
 scripts/               make_samples (fixtures), make_heldout (held-out set), fetch_models, run_extract
 tests/

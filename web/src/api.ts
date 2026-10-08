@@ -329,6 +329,41 @@ export interface Rehydrated {
   unknown: string[];
 }
 
+/** An LLM's answer restored by the prompt guard, with what else the answer held. */
+export interface GuardAnswer extends Rehydrated {
+  /** tokens the model had written differently and that were put back into shape */
+  repaired: string[];
+  /** false: a scan was using the detector, so the answer was restored without being inspected */
+  inspected: boolean;
+  /** tokens whose original value appears in the answer although it was never sent */
+  echoed: string[];
+  /** values in the answer that came from nowhere in this conversation */
+  produced: { entity_type: string; text: string; score: number; decision: Decision; line: number; reasons: string[] }[];
+}
+
+interface ActivityTally {
+  checks: number;
+  blocked: number;
+  redacted: number;
+  clean: number;
+  values: number;
+}
+
+/** The guard's record over all conversations (counts only), read from its hash-chained file. */
+export interface GuardActivity {
+  path: string;
+  integrity: { ok: boolean; records: number; detail: string };
+  first: string;
+  last: string;
+  totals: ActivityTally & { restored: number; tokens_restored: number; echoed: number; produced: number; operators: number; code_lines_stopped: number };
+  by_operator: (ActivityTally & { operator: string; restored: number; tokens_restored: number; last: string })[];
+  by_day: (ActivityTally & { day: string })[];
+  by_rule: Record<string, number>;
+  replaced_by_category: Record<string, number>;
+  stopped_by_category: Record<string, number>;
+  recent: GuardEvent[];
+}
+
 /** One value the prompt guard replaced; start/end are offsets into the prompt as it was typed. */
 export interface GuardFinding {
   entity_type: string;
@@ -364,6 +399,10 @@ export interface GuardEvent {
   tokens?: string[];
   count?: number;
   unknown?: number;
+  repaired?: number;
+  echoed?: number;
+  produced?: number;
+  inspected?: boolean;
   purpose?: string;
 }
 
@@ -547,8 +586,9 @@ export const api = {
   guard: () => get<GuardState>("/api/guard"),
   guardCheck: (text: string, settings: ScanSettings, policy: GuardPolicy) =>
     post<GuardResult>("/api/guard/check", { text, settings, policy }),
-  guardRehydrate: (text: string, operator: string | null) =>
-    post<Rehydrated>("/api/guard/rehydrate", { text, operator, purpose: "LLM answer" }),
+  guardRehydrate: (text: string, settings: ScanSettings) =>
+    post<GuardAnswer>("/api/guard/rehydrate", { text, settings, operator: settings.operator, purpose: "LLM answer" }),
+  guardActivity: () => get<GuardActivity>("/api/guard/activity"),
   guardReplay: (cap: number) => get<Replay>(`/api/guard/replay?cap=${cap}`),
   registry: () => get<RegistryState>("/api/registry"),
   register: (files: File[], name: string, text: string, operator: string | null) => {

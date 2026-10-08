@@ -11,16 +11,20 @@ document, holds a value of a category the organisation never lets out, or is lar
 One ``Guard`` is one conversation: a person or value gets the same token in every prompt, and a
 person redacted once is looked for in every later prompt, by surname alone too.
 
-Nothing is written to disk and no prompt is kept: the log holds counts, never text.
+No prompt or answer is kept. Every check and every restoration is recorded, as counts and never
+as text, in a hash-chained file that outlives the conversation (``activity`` reads it back).
 """
 from __future__ import annotations
 
 import copy
+import json
+import os
 import re
 import threading
 import time
 from collections import Counter
 from dataclasses import asdict
+from pathlib import Path
 
 from . import audit
 from .config import ORG, GuardPolicy, Settings
@@ -28,12 +32,13 @@ from .detect import code, markings
 from .detect.propagation import PersonIndex
 from .models import Document, Span
 from .pipeline import get_detector, locate_missed
-from .redact.leakcheck import build_needles, scrub_text
+from .redact.leakcheck import build_needles, find, scrub_text
 from .redact.text import LIVE, apply, merged_ranges
 from .redact.tokens import TokenVault, rehydrate
 
 NAME = "prompt"
 MAX_LOG = 200
+RECORD_ID = "prompt-guard"
 BLOCK = re.compile(r"(?:[^\n]+\n?)+")  # lines up to a blank line
 
 
@@ -61,8 +66,11 @@ def _lines(blocks: list[list[int]]) -> str:
 
 
 class Guard:
-    def __init__(self, registry=None) -> None:
+    def __init__(self, registry=None, record_path: str | Path | None = None) -> None:
         self.registry = registry  # registry.Registry of protected documents, or None
+        # Where every check and restoration is recorded for good (hash-chained, see ``activity``); None: nowhere.
+        self.record_path = Path(record_path) if record_path is not None else None
+        self._record_lock = threading.Lock()
         self.lock = threading.Lock()  # the detector is shared with scans: one user of it at a time
         self.reset()
 
@@ -75,8 +83,13 @@ class Guard:
         self.checks = 0
 
     def _record(self, entry: dict) -> None:
+        """To the conversation's log, and to the record that outlives it (never text: counts only)."""
         self.log.append(entry)
         del self.log[:-MAX_LOG]
+        if self.record_path is not None:
+            with self._record_lock:
+                self.record_path.parent.mkdir(parents=True, exist_ok=True)
+                audit.AuditLog(self.record_path, RECORD_ID).append([{k: v for k, v in entry.items() if k != "id"}])
 
     # ------------------------------------------------------------------------------- check
     def check(self, text: str, settings: Settings | None = None, policy: GuardPolicy | None = None,
@@ -180,12 +193,74 @@ class Guard:
                 "elapsed": round(time.perf_counter() - t0, 3)}
 
     # --------------------------------------------------------------------------- rehydrate
-    def rehydrate(self, text: str, operator: str | None = None, purpose: str = "") -> dict:
-        """Values back into text that holds tokens. Only tokens this conversation issued are known."""
-        out, restored, unknown = rehydrate(text, self.vault.values if self.vault is not None else {})
+    def _repair(self, text: str) -> tuple[str, list[str]]:
+        """A model often rewrites a token: "[Person_001]", "PERSON 001", "[PERSON-001]". Each such
+        form of a token this conversation issued is put back into shape, so that it can be restored."""
+        repaired: list[str] = []
+        for token in sorted(self.vault.values if self.vault is not None else [], key=len, reverse=True):
+            parts = [re.escape(p) for p in token[1:-1].split("_") if p]
+            if len(parts) < 2 or not re.search(r"\d", parts[-1]):
+                continue  # "[CARD]": no number, so a loose form would be an ordinary word
+            inner = r"[ \t_-]*".join(parts)
+            loose = re.compile(r"\[[ \t]*" + inner + r"[ \t]*\]"  # in brackets, however it is spaced or cased
+                               r"|(?<![A-Za-z0-9_\[])" + inner + r"(?![A-Za-z0-9]|[_-][A-Za-z0-9]|[ \t]*\])",  # or without them
+                               re.IGNORECASE)
+
+            def fix(m: re.Match, token=token) -> str:
+                if m.group() != token and token not in repaired:
+                    repaired.append(token)
+                return token
+
+            text = loose.sub(fix, text)
+        return text, repaired
+
+    def _inspect(self, answer: str, settings: Settings) -> dict:
+        """What an answer holds besides tokens: values this conversation had replaced (the model should
+        never have seen them), and values that came from nowhere in it (the model produced them)."""
+        known: dict[str, str] = {}
+        for token, forms in (self.vault.values if self.vault is not None else {}).items():
+            for form in forms:
+                known[re.sub(r"\s+", " ", form.strip()).lower()] = token
+        echoed: list[str] = []
+        if self.vault is not None:
+            for _, _, matched in find(answer, build_needles(self.vault)):
+                token = known.get(re.sub(r"\s+", " ", matched.strip()).lower())
+                if token and token not in echoed:
+                    echoed.append(token)
+        doc, offsets = to_document(answer)
+        s = copy.copy(settings)
+        s.extra_deny_list = list(settings.extra_deny_list) + sorted(self.persons.origin)
+        produced = []
+        for f in get_detector(s).detect_all({NAME: doc})[NAME]:
+            if f.decision not in LIVE or re.sub(r"\s+", " ", f.text.strip()).lower() in known:
+                continue
+            a = offsets[f.span_id] + f.start
+            produced.append({"entity_type": f.entity_type, "text": f.text, "score": f.score, "decision": f.decision,
+                             "line": answer.count("\n", 0, a) + 1, "reasons": f.reasons})
+        return {"echoed": echoed, "produced": produced}
+
+    def rehydrate(self, text: str, operator: str | None = None, purpose: str = "", settings: Settings | None = None,
+                  inspect: bool = True, wait: float | None = None) -> dict:
+        """Values back into an answer that holds tokens, and a look at what else the answer holds.
+
+        Only tokens this conversation issued are restored; one the model wrote differently is put
+        back into shape first. With ``inspect`` the answer also goes through detection: it is
+        reported, never changed. If the detector is in use the answer is restored uninspected."""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        fixed, repaired = self._repair(text)
+        out, restored, unknown = rehydrate(fixed, self.vault.values if self.vault is not None else {})
+        found: dict = {"echoed": [], "produced": []}
+        inspected = False
+        if inspect and self.lock.acquire(timeout=-1 if wait is None else wait):
+            try:
+                found, inspected = self._inspect(fixed, settings or Settings()), True
+            finally:
+                self.lock.release()
         self._record({"event": "rehydrate", "timestamp": audit.now(), "operator": operator or Settings().operator,
-                      "tokens": restored, "count": len(restored), "unknown": len(unknown), "purpose": purpose})
-        return {"text": out, "restored": restored, "unknown": unknown}
+                      "tokens": restored, "count": len(restored), "unknown": len(unknown), "repaired": len(repaired),
+                      "echoed": len(found["echoed"]), "produced": len(found["produced"]), "inspected": inspected,
+                      "purpose": purpose})
+        return {"text": out, "restored": restored, "unknown": unknown, "repaired": repaired, "inspected": inspected, **found}
 
     def state(self) -> dict:
         v = self.vault
@@ -193,3 +268,55 @@ class Guard:
                 "people": len(v.person_no) if v is not None else 0,
                 "blocked": sum(e.get("verdict") == "blocked" for e in self.log),
                 "restored": sum(e["event"] == "rehydrate" for e in self.log), "log": self.log[::-1]}
+
+
+# ------------------------------------------------------------------------------ the record
+def default_record_path() -> Path:
+    return Path(os.environ.get("PII_SHIELD_GUARD_LOG") or Path.home() / ".pii_shield" / "guard_log.jsonl")
+
+
+def activity(path: str | Path, recent: int = 200) -> dict:
+    """What the guard did, over all conversations: totals, per operator, per day, per rule and per
+    category, the latest events, and whether the record is intact (audit.verify_chain)."""
+    path = Path(path)
+    events: list[dict] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    pass  # verify_chain below says which line
+    ok, records, head = audit.verify_chain(path) if events else (True, 0, "")
+    checks = [e for e in events if e.get("event") == "check"]
+    restores = [e for e in events if e.get("event") == "rehydrate"]
+
+    def tally(rows: list[dict]) -> dict:
+        c = Counter(e.get("verdict") for e in rows)
+        return {"checks": len(rows), "blocked": c["blocked"], "redacted": c["redacted"], "clean": c["clean"],
+                "values": sum(e.get("values", 0) for e in rows if e.get("verdict") == "redacted")}
+
+    operators: dict[str, dict] = {}
+    for name in sorted({e.get("operator") or "unknown" for e in events}):
+        mine = [e for e in checks if (e.get("operator") or "unknown") == name]
+        back = [e for e in restores if (e.get("operator") or "unknown") == name]
+        operators[name] = {**tally(mine), "restored": len(back), "tokens_restored": sum(e.get("count", 0) for e in back),
+                           "last": max((e.get("timestamp", "") for e in mine + back), default="")}
+    days: dict[str, list[dict]] = {}
+    for e in checks:
+        days.setdefault(e.get("timestamp", "")[:10], []).append(e)
+    rules, categories, held = Counter(), Counter(), Counter()
+    for e in checks:
+        rules.update(e.get("blocked_by") or [])
+        (held if e.get("verdict") == "blocked" else categories).update(e.get("by_category") or {})
+    return {
+        "path": str(path), "integrity": {"ok": ok, "records": records, "detail": "" if ok else head},
+        "first": events[0].get("timestamp", "") if events else "", "last": events[-1].get("timestamp", "") if events else "",
+        "totals": {**tally(checks), "restored": len(restores), "tokens_restored": sum(e.get("count", 0) for e in restores),
+                   "echoed": sum(e.get("echoed", 0) for e in restores), "produced": sum(e.get("produced", 0) for e in restores),
+                   "operators": len(operators), "code_lines_stopped": sum(e.get("code_lines", 0) for e in checks if e.get("verdict") == "blocked")},
+        "by_operator": [{"operator": k, **v} for k, v in operators.items()],
+        "by_day": [{"day": d, **tally(rows)} for d, rows in sorted(days.items())],
+        "by_rule": dict(rules), "replaced_by_category": dict(categories), "stopped_by_category": dict(held),
+        "recent": [{k: v for k, v in e.items() if k not in ("hash", "prev", "run_id")} for e in events[-recent:]][::-1],
+    }

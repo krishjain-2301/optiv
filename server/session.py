@@ -17,7 +17,7 @@ from pathlib import Path
 from optiv_pii_shield import RunResult, Settings, audit, replay, run, workspace
 from optiv_pii_shield.errors import ModelMissing, RunCancelled
 from optiv_pii_shield.extract import extract
-from optiv_pii_shield.guard import Guard, GuardBusy
+from optiv_pii_shield.guard import Guard, GuardBusy, default_record_path
 from optiv_pii_shield.pipeline import REVIEW_STAGES, STAGES, _unique, apply_review, stage_of
 from optiv_pii_shield.redact.tokens import rehydrate
 from optiv_pii_shield.registry import Registry
@@ -97,7 +97,8 @@ class Session:
         self.transcriptions: dict[str, str] = {}  # file -> hand transcription, for structure retention
         self.cache: dict = {}  # payloads derived from the result, dropped with it
         self.registry = Registry()  # fingerprints of protected documents: a file that outlives the session
-        self.guard = Guard(self.registry)  # the prompt guard's conversation: in memory only, independent of the run
+        # The prompt guard's conversation is in memory only; its record of what was checked is a file that stays.
+        self.guard = Guard(self.registry, default_record_path())
 
     # ------------------------------------------------------------------------- lifecycle
     def open(self) -> None:
@@ -289,6 +290,12 @@ class Session:
         finally:
             self.guard.lock.release()
         return errors
+
+    def restore_answer(self, text: str, operator: str | None, purpose: str, settings: Settings) -> dict:
+        """An LLM's answer with its tokens turned back into values, and a look at what else it holds.
+        While a scan uses the detector the answer is restored without that look (and says so)."""
+        scanning = self.job is not None and self.job.kind == "scan" and self.job.state in ACTIVE
+        return self.guard.rehydrate(text, operator, purpose, settings, inspect=not scanning, wait=5)
 
     def replay(self, cap: int) -> dict:
         """The Samsung scenarios under a size cap and under the guard (optiv_pii_shield/replay.py).

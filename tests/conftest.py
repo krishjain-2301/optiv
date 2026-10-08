@@ -6,7 +6,9 @@ from pathlib import Path
 import pytest
 
 # The registry of protected documents is a file in the user's home: tests get one of their own.
-os.environ["PII_SHIELD_REGISTRY"] = str(Path(tempfile.mkdtemp(prefix="pii-shield-test-")) / "registry.json")
+_HOME = Path(tempfile.mkdtemp(prefix="pii-shield-test-"))
+os.environ["PII_SHIELD_REGISTRY"] = str(_HOME / "registry.json")
+os.environ["PII_SHIELD_GUARD_LOG"] = str(_HOME / "guard_log.jsonl")  # so is the guard's record
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))

@@ -4,7 +4,7 @@
 // tokens this conversation issued.
 import { Ban, Check, Copy, Fingerprint, KeyRound, Play, RotateCcw, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { api, type GuardAction, type GuardPolicy, type GuardResult, type GuardState, type RegistryState, type Rehydrated, type Replay } from "../api";
+import { api, type GuardAction, type GuardAnswer, type GuardPolicy, type GuardResult, type GuardState, type RegistryState, type Replay } from "../api";
 import { Meter } from "../components/charts";
 import { MultiSelect, Select } from "../components/controls";
 import { DataTable } from "../components/table";
@@ -146,12 +146,12 @@ function CheckPrompt({ text, setText, result, setResult, policy, refresh }: {
 function Restore({ state, refresh }: { state: GuardState | null; refresh: () => void }) {
   const { settings } = useStore();
   const [text, setText] = useState("");
-  const [out, setOut] = useState<Rehydrated | null>(null);
+  const [out, setOut] = useState<GuardAnswer | null>(null);
   const [error, setError] = useState<string | null>(null);
   const go = async () => {
     setError(null);
     try {
-      setOut(await api.guardRehydrate(text, settings.operator));
+      setOut(await api.guardRehydrate(text, settings));
       refresh();
     } catch (e) {
       setError((e as Error).message);
@@ -172,10 +172,27 @@ function Restore({ state, refresh }: { state: GuardState | null; refresh: () => 
         <Card title="With original values" sub="Shown here only; not written to any file">
           <pre className="text-pane">{out ? out.text : "Nothing restored yet."}</pre>
           {out && <div className="inline"><CopyButton text={out.text} /></div>}
-          {out && <Muted>{out.restored.length} token(s) restored.{out.unknown.length ? ` Left as they are: ${out.unknown.join(", ")} (not issued in this conversation, or one token stands for several values by design).` : ""}</Muted>}
+          {out && <Muted>{out.restored.length} token(s) restored.{out.repaired.length ? ` ${out.repaired.length} of them had been written differently by the model (${out.repaired.join(", ")}) and were recognised.` : ""}{out.unknown.length ? ` Left as they are: ${out.unknown.join(", ")} (not issued in this conversation, or one token stands for several values by design).` : ""}</Muted>}
         </Card>
       </Row>
-      <Muted>Only tokens issued by this conversation can be restored. Each use is added to the conversation log.</Muted>
+      {out && !out.inspected && <Notice kind="info">A scan is using the detector, so the answer was restored without being inspected for other values.</Notice>}
+      {out && out.echoed.length > 0 && (
+        <Notice kind="error">The answer already contained the original value behind {out.echoed.join(", ")}, although only the token was sent. The model learned it some other way: check what else was sent to it.</Notice>
+      )}
+      {out && out.produced.length > 0 && (
+        <Card title="Values the model produced" sub="Personal data or credentials in the answer that came from nowhere in this conversation">
+          <DataTable rows={out.produced} pageSize={10} cols={[
+            { key: "value", label: "Value", value: (f) => f.text },
+            { key: "cat", label: "Category", value: (f) => pretty(f.entity_type) },
+            { key: "score", label: "Score", value: (f) => f.score, render: (f) => <Meter value={f.score} label={f.score.toFixed(2)} /> },
+            { key: "line", label: "Line", value: (f) => f.line, align: "right" },
+            { key: "why", label: "Why it was flagged", value: (f) => f.reasons.join("; "), wrap: true, width: "26rem" },
+          ]} />
+          <Muted>A model can invent a name, a number or a key that looks real. These were left in the answer as they are: check them before the answer is used.</Muted>
+        </Card>
+      )}
+      {out && out.inspected && !out.echoed.length && !out.produced.length && <Notice kind="success">The answer holds no personal data or credentials besides the tokens that were restored.</Notice>}
+      <Muted>Only tokens issued by this conversation can be restored. The answer is also inspected, never changed. Each use is recorded.</Muted>
     </>
   );
 }
@@ -207,7 +224,7 @@ function Conversation({ state, forget }: { state: GuardState | null; forget: () 
         ]} />
         <div className="inline">
           <button className="btn danger" onClick={forget} disabled={!state.checks && !state.log.length}><Trash2 size={16} /> Forget this conversation</button>
-          <span className="muted">Deletes the tokens, their values and this log. Earlier answers can then no longer be restored.</span>
+          <span className="muted">Deletes the tokens, their values and this log. Earlier answers can then no longer be restored. The record under Guard activity stays.</span>
         </div>
       </Card>
     </>

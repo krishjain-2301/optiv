@@ -10,7 +10,8 @@
     /api/run/output      GET one output file            /api/run/outputs.zip  GET the shareable set
     /api/guard           GET the prompt guard's conversation · DELETE forget it
     /api/guard/check     POST a prompt: its values replaced by tokens, and what was found
-    /api/guard/rehydrate POST an answer holding those tokens: original values put back
+    /api/guard/rehydrate POST an answer holding those tokens: original values put back, the rest inspected
+    /api/guard/activity  GET the record of every check and restoration, over all conversations
     /api/guard/replay    GET the Samsung scenarios under a size cap and under the guard
     /api/registry        GET protected documents · POST register files or text · DELETE /{id}
     /api/session         DELETE this session's files
@@ -45,6 +46,7 @@ from optiv_pii_shield.config import ORG, PROFILES, GuardPolicy
 from optiv_pii_shield.detect import OUTPUT_ENTITIES
 from optiv_pii_shield.errors import ModelMissing
 from optiv_pii_shield.evaluate import gold_template
+from optiv_pii_shield.guard import activity
 from optiv_pii_shield.replay import SAMSUNG_CAP
 from optiv_pii_shield.review import Addition, Decision
 
@@ -377,9 +379,25 @@ def guard_check(body: GuardCheck):
         raise HTTPException(503, str(exc)) from exc
 
 
+class GuardAnswer(RehydrateRequest):
+    settings: ScanSettings = Field(default_factory=ScanSettings)  # for the look at what else the answer holds
+
+
 @app.post("/api/guard/rehydrate")
-def guard_rehydrate(body: RehydrateRequest):
-    return _json(session.guard.rehydrate(body.text, (body.operator or "").strip() or None, body.purpose.strip()))
+def guard_rehydrate(body: GuardAnswer):
+    try:
+        cfg = body.settings.to_settings()
+    except ValueError as exc:
+        raise HTTPException(422, f"settings: {exc}") from exc
+    try:
+        return _json(session.restore_answer(body.text, (body.operator or "").strip() or None, body.purpose.strip(), cfg))
+    except ModelMissing as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.get("/api/guard/activity")
+def guard_activity():
+    return _json(activity(session.guard.record_path))
 
 
 @app.get("/api/guard/replay")

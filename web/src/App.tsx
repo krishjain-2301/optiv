@@ -1,8 +1,9 @@
 // Layout: the sidebar lists the modes by category; each page lays its own steps out left to right.
-import { BadgeCheck, Download, FileText, Flame, EyeOff, LayoutDashboard, MessageSquareLock, ShieldCheck, FileUp, UserCheck } from "lucide-react";
+import { Activity as ActivityIcon, BadgeCheck, Download, FileText, Flame, EyeOff, LayoutDashboard, MessageSquareLock, ShieldCheck, FileUp, UserCheck } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { TooltipLayer } from "./components/tooltip";
 import { clock, int, percent } from "./lib/format";
+import Activity from "./pages/Activity";
 import Evaluation from "./pages/Evaluation";
 import Exposure from "./pages/Exposure";
 import Extraction from "./pages/Extraction";
@@ -33,6 +34,7 @@ const NAV = [
     { to: "/review", label: "Review", icon: UserCheck },
     { to: "/evaluation", label: "Evaluation", icon: BadgeCheck },
     { to: "/reports", label: "Reports", icon: Download },
+    { to: "/activity", label: "Guard activity", icon: ActivityIcon },
   ] },
 ];
 
@@ -96,6 +98,7 @@ export default function App() {
           <Route path="/review" element={<Review />} />
           <Route path="/evaluation" element={<Evaluation />} />
           <Route path="/reports" element={<Reports />} />
+          <Route path="/activity" element={<Activity />} />
           <Route path="*" element={<Scan />} />
         </Routes>
       </main>
