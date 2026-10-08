@@ -93,8 +93,7 @@ function CheckPrompt({ text, setText, result, setResult, policy, refresh }: {
           { label: "Uncertain", value: int(result.review), status: result.review ? "warning" : "good", sub: blocked ? "scored in the review band" : "replaced anyway (fail closed)" },
           { label: "Source code", value: result.code.detected ? `${int(result.code.code_lines)} lines` : "None", status: result.code.detected ? "warning" : "good",
             sub: result.code.detected ? result.code.languages.join(", ") || "language not recognised" : "the prompt reads as prose" },
-          { label: "Prompt size", value: `${int(result.chars)} chars`, sub: `${int(result.bytes)} bytes` },
-          { label: "Checked in", value: `${result.elapsed.toFixed(2)} s`, sub: "on this machine, no network" },
+          { label: "Prompt size", value: `${int(result.bytes)} bytes`, sub: `checked in ${result.elapsed.toFixed(2)} s on this machine` },
         ]} />
       )}
       {blocked && (
@@ -253,7 +252,7 @@ function Policy({ policy, setPolicy, reset }: { policy: GuardPolicy; setPolicy: 
 }
 
 /** Confidential documents registered by fingerprint: a prompt that copies from one is refused. */
-function ProtectedContent() {
+function ProtectedContent({ onChange }: { onChange: () => void }) {
   const { settings } = useStore();
   const [reg, setReg] = useState<RegistryState | null>(null);
   const [files, setFiles] = useState<File[]>([]);
@@ -267,6 +266,7 @@ function ProtectedContent() {
     setBusy(true);
     try {
       setReg(await call());
+      onChange(); // a verdict belongs to the registry it was made against
       done?.();
     } catch (e) {
       setError((e as Error).message);
@@ -440,7 +440,7 @@ export default function Guard() {
       {step === 1 && <Restore state={state} refresh={refresh} />}
       {step === 2 && <Conversation state={state} forget={forget} />}
       {step === 3 && <Policy policy={policy} setPolicy={setPolicy} reset={resetPolicy} />}
-      {step === 4 && <ProtectedContent />}
+      {step === 4 && <ProtectedContent onChange={() => setResult(null)} />}
       {step === 5 && <SamsungReplay tryPrompt={(t) => { setText(t); setResult(null); setStep(0); }} />}
     </>
   );
