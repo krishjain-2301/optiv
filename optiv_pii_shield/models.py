@@ -29,7 +29,7 @@ class Span:
     id: str
     file: str
     text: str
-    kind: str  # heading | paragraph | table_cell | text_box | header | footer | comment | notes | metadata | shape | ocr_block | image_ocr
+    kind: str  # heading | paragraph | table_cell | text_box | header | footer | comment | notes | metadata | shape | ocr_block | image_ocr | speaker
     page: Optional[int] = None  # 1-based page or slide number
     location: str = ""  # human-readable position, e.g. "table 2, row 3, col 1"
     source: str = "native"  # native | ocr | image_ocr
@@ -79,7 +79,7 @@ class Visual:
 class Document:
     file: str
     path: str
-    file_type: str  # pdf | docx | pptx | xlsx | image | text | csv | eml
+    file_type: str  # pdf | docx | pptx | xlsx | image | text | csv | eml | transcript
     pages: int = 0
     spans: list[Span] = field(default_factory=list)
     images: list[ImageRef] = field(default_factory=list)

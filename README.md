@@ -4,7 +4,7 @@
 
 # PII Shield
 
-**Offline, fail-closed PII detection and redaction for PDFs, Office files, images, e-mail and text.**
+**Offline, fail-closed PII detection and redaction for PDFs, Office files, images, e-mail, transcripts and text.**
 
 Hand documents to an LLM without handing over the people inside them.
 
@@ -46,7 +46,8 @@ That rules out the obvious shortcut. Sending the raw files to a cloud OCR, a clo
 - **Fail-closed.** A file that cannot be read produces no output. An uncertain finding is redacted *and* queued
   for a human. A picture nobody could read is blanked. A masked file in which an original value is still
   readable is not released.
-- **Many formats.** PDF (text layer and scanned), DOCX, PPTX, XLSX, images, e-mail (`.eml`), CSV and plain text,
+- **Many formats.** PDF (text layer and scanned), DOCX, PPTX, XLSX, images, e-mail (`.eml`), meeting transcripts
+  (`.vtt`, `.srt`), CSV and plain text,
   including the places a reader does not see: comments, speaker notes, alt text, document properties, PDF
   bookmarks, hidden sheets, tracked changes, link targets.
 - **Consistent tokens.** `Priya Raman` becomes `[PERSON_007]` in every file of the run, and her e-mail becomes
@@ -129,6 +130,7 @@ The true type is read from the file's first bytes, never from its extension.
 | XLSX | Every sheet (hidden too), cells under their column headers, formulas, comments, properties |
 | Images | OCR with per-character positions |
 | E-mail (`.eml`) | Address headers (names and addresses apart), subject, body. Attachments are not read and are dropped: scan them as files |
+| Transcripts (`.vtt`, `.srt`) | Every cue: who spoke (a voice tag or a `Name:` prefix) apart from what was said; the title, notes and cue names too. Timings are never touched |
 | CSV / TSV, text | Cells under their column headers; paragraphs |
 
 **A file that is only pictures works.** A scanned PDF has no text at all; each page is rendered at 300 dpi and
@@ -152,7 +154,7 @@ No LLM decides what is PII. Four layers each look for evidence, and a score deci
 |---|---|---|
 | **L1** Rules | Patterns, checksums and context words (inside Presidio) | A 16-digit number that passes the Luhn check near the word "card" |
 | **L2** NER | spaCy `en_core_web_lg`, optional GLiNER-PII (inside Presidio) | "Priya Raman noticed that…" |
-| **L3** Structure | Column headers, `Label:` fields, document properties | Anything under an "E-mail" column, or after "Full name:" |
+| **L3** Structure | Column headers, `Label:` fields, document properties, speaker labels | Anything under an "E-mail" column, after "Full name:", or the speaker of a transcript cue |
 | **L4** Propagation | Every confirmed person is searched across all files: surname, initial, possessive, OCR misreadings | "Raman", "Rafael's", "R. Mendoza" |
 | **L0** Fail-closed | Identifier-like OCR words below the confidence floor | A blurred string with digits or `@` |
 | **L5** Gate and reviewer | A value found in one place is redacted in every other place it appears; a reviewer's additions | |
@@ -190,7 +192,7 @@ stated health data (a special category), and confidential terms.
 - **LLM text.** Redacted Markdown with the same headings, tables and page markers as the extracted text.
 - **Masked copies.** PDF: true redaction (text and pixels under the box are removed), token printed in the box.
   DOCX / PPTX / XLSX: text nodes rewritten in place, so formatting survives. Text formats are written back in
-  their own shape. Page count and layout are kept; author metadata is cleared.
+  their own shape; a transcript keeps every timing line. Page count and layout are kept; author metadata is cleared.
 - **What a reader cannot see is removed.** Tracked-change deletions, embedded objects and chart workbooks, the
   thumbnail, image EXIF, PDF annotations, form fields and attachments.
 - **Pictures nobody read are blanked.** A picture with no readable text (a photo, a signature, a logo), a
@@ -515,7 +517,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 231 tests, a few minutes on CPU
+pytest -q            # 236 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -538,6 +540,8 @@ cd web; npm run typecheck
   refuse a prompt; a refused prompt issues no tokens; confidential terms; the policy over HTTP.
 - **Protected content** (`tests/test_registry.py`): no text in the registry file; copied wording recognised
   whatever its case and layout; a paraphrase is not; the guard refuses, warns or allows; the registry over HTTP.
+- **Transcripts** (`tests/test_transcript.py`): cues and speakers read from `.vtt` and `.srt`; masked copies keep
+  their timings; a speaker is the same token in both files; speaker labels in pasted text.
 - **Replay** (`tests/test_replay.py`): the outcome of each Samsung scenario under the cap and under the guard.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
@@ -555,7 +559,7 @@ optiv_pii_shield/
                        given_names.txt (gazetteer)
   models.py            Span / Word / ImageRef / Visual / Document / Finding
   modelstore.py        model files pinned by SHA-256
-  extract/             sniff, pdf, docx, pptx, xlsx, image, plain (text/CSV/e-mail), ooxml walkers, layout
+  extract/             sniff, pdf, docx, pptx, xlsx, image, plain (text/CSV/e-mail), transcript (.vtt/.srt), ooxml walkers, layout
                        (tables/regions), ocr backends, visual (faces, QR codes)
   detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver, secrets
                        (names and values of credentials), code (is this text source code?), markings

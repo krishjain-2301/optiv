@@ -53,6 +53,7 @@ def render_markdown(doc: Document, texts: Optional[dict[str, str]] = None) -> st
 
     out: list[str] = []
     page = None
+    speaker = ""
     for key, typ, payload in items:
         if key[0] and key[0] != page:
             page = key[0]
@@ -74,6 +75,11 @@ def render_markdown(doc: Document, texts: Optional[dict[str, str]] = None) -> st
         else:
             s: Span = payload
             t = txt(s).strip()
+            if s.kind == "speaker":  # a transcript cue's speaker: joined to what they said
+                speaker = t
+                continue
+            if speaker:
+                t, speaker = f"**{speaker}:** {t}", ""
             if s.kind == "heading":
                 out.append("#" * min(s.level or 2, 6) + " " + " ".join(t.split()))
             elif s.kind in QUOTED:

@@ -1,7 +1,7 @@
 """Identify the true file type from magic bytes, never from the extension.
 
 Text has no magic bytes, so among files that decode as text the extension picks the reader
-(.eml, .csv / .tsv, anything else is plain text); a wrong extension there only changes how the
+(.eml, .csv / .tsv, .vtt / .srt, anything else is plain text); a wrong extension there only changes how the
 same text is split up, never whether it is read.
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ MAX_MEMBERS = 20_000
 
 
 def sniff(path: str | Path) -> str:
-    """Return one of: pdf, docx, pptx, xlsx, image, text, csv, eml, legacy, unknown."""
+    """Return one of: pdf, docx, pptx, xlsx, image, text, csv, eml, transcript, legacy, unknown."""
     path = Path(path)
     with open(path, "rb") as fh:
         head = fh.read(16)
@@ -50,4 +50,6 @@ def sniff(path: str | Path) -> str:
         if exc.end < 4090:  # not just a multi-byte character cut at the end of the sample
             return "unknown"
     suffix = path.suffix.lower()
+    if suffix in (".vtt", ".srt"):
+        return "transcript"
     return "eml" if suffix == ".eml" else "csv" if suffix in (".csv", ".tsv") else "text"

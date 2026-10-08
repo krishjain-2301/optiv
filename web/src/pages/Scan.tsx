@@ -8,7 +8,7 @@ import { DECISION_COLOR, NEUTRAL, pretty } from "../lib/entities";
 import { clock, fileSize, percent } from "../lib/format";
 import { isActive, useStore } from "../store";
 
-const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt,.csv,.tsv,.eml";
+const ACCEPT = ".pdf,.docx,.pptx,.xlsx,.png,.jpg,.jpeg,.tif,.tiff,.bmp,.txt,.csv,.tsv,.eml,.vtt,.srt";
 const ACTION: Record<string, string> = { mask: "category only", last4: "last four digits", year: "year only", token: "stable token" };
 const lines = (text: string) => text.split("\n").map((x) => x.trim()).filter(Boolean);
 
@@ -22,7 +22,7 @@ function Sources() {
   };
   return (
     <Row cols="3fr 2fr">
-      <Card title="Artifacts" sub="PDF (text or scanned), DOCX, PPTX, XLSX, images, e-mail (.eml), CSV and text">
+      <Card title="Artifacts" sub="PDF (text or scanned), DOCX, PPTX, XLSX, images, e-mail (.eml), transcripts (.vtt, .srt), CSV and text">
         <label className={over ? "drop over" : "drop"}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
           onDragLeave={() => setOver(false)}

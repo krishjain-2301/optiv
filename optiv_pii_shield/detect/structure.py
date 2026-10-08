@@ -9,7 +9,7 @@ from typing import Optional
 
 from ..config import HEADER_CATEGORIES
 from ..models import Finding, Span
-from .names import ANY_CASE, looks_like_name
+from .names import ANY_CASE, is_given_name, looks_like_name
 
 EMPTY = {"", "-", "–", "—", "n/a", "na", "none", "tbd", "tbc", "nil", "null", "yes", "no", "x", "?", "various", "all"}
 LABEL_LINE = re.compile(r"(?m)^[ \t]*(?P<label>[A-Za-z][A-Za-z .#/()'-]{1,40}?)[ \t]*[:：][ \t]*(?P<value>[^\n]+?)[ \t]*$")
@@ -63,8 +63,37 @@ def _finding(span: Span, start: int, end: int, cat: str, score: float, reasons: 
                    score=score, recognizer=rec, layer="L3 structure", reasons=reasons)
 
 
+# Who is speaking, in a transcript or a chat export: "Dana Whitlock: ...", "[10:32] Dana: ...".
+SPEAKER_LINE = re.compile(r"(?m)^[ \t]*(?:\[?\d{1,2}:\d{2}(?::\d{2})?\]?[ \t]+)?(?P<name>[A-Z][\w'.-]*(?:[ \t]+[A-Z][\w'.-]*){0,3})"
+                          r"[ \t]*(?:\(\d{1,2}:\d{2}(?::\d{2})?\))?:[ \t]+\S")
+NOT_A_SPEAKER = {"speaker", "interviewer", "interviewee", "moderator", "host", "operator", "narrator", "unknown", "agent",
+                 "customer", "caller", "participant", "audience", "presenter", "chair", "all", "everyone", "q", "a"}
+
+
+def _speaker_findings(span: Span, allow: set[str]) -> list[Finding]:
+    text = span.text
+    if span.kind == "speaker":  # a transcript's own speaker field (extract/transcript.py)
+        value = text.strip()
+        if re.sub(r"[\d\s#]+$", "", value).lower() in NOT_A_SPEAKER or not plausible(value, "PERSON", allow)[0]:
+            return []
+        start = len(text) - len(text.lstrip())
+        return [_finding(span, start, start + len(value), "PERSON", 0.8, ["named as the speaker of a transcript cue"], "structure:speaker")]
+    out = []
+    labels = [m.group("name") for m in SPEAKER_LINE.finditer(text)]
+    for m in SPEAKER_LINE.finditer(text):
+        name = m.group("name")
+        # In running text a capitalised label is usually a heading ("Next Steps:"). It is taken for a
+        # speaker when it starts with a listed given name, or when it speaks more than once.
+        if not (is_given_name(name.split()[0]) or labels.count(name) >= 2) or name.lower() in NOT_A_SPEAKER or header_category(name):
+            continue
+        if plausible(name, "PERSON", allow)[0]:
+            out.append(_finding(span, m.start("name"), m.end("name"), "PERSON", 0.7,
+                                ["a speaker label at the start of a line"], "structure:speaker"))
+    return out
+
+
 def structure_findings(span: Span, allow: set[str]) -> list[Finding]:
-    out: list[Finding] = []
+    out: list[Finding] = _speaker_findings(span, allow)
     text = span.text
 
     # 1. Column header / metadata field describing the whole span.

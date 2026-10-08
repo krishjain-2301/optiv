@@ -46,6 +46,10 @@ def _extract(path: Path, settings: Settings, on_page=None) -> Document:
         from . import plain
 
         return {"text": plain.extract_text, "csv": plain.extract_csv, "eml": plain.extract_eml}[ftype](path, settings)
+    if ftype == "transcript":
+        from .transcript import extract_transcript
+
+        return extract_transcript(path, settings)
     if ftype == "legacy":
         raise ValueError(f"{path.name}: legacy Office / Outlook binary format (.doc, .xls, .ppt, .msg) is not read; "
                          "save it as DOCX, XLSX, PPTX or EML and scan that. Nothing is passed downstream.")

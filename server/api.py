@@ -56,7 +56,7 @@ DIST = ROOT / "web" / "dist"
 sys.path.insert(0, str(ROOT / "scripts"))  # make_samples (synthetic fixtures)
 
 UPLOAD_TYPES = {".pdf", ".docx", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp",
-                ".txt", ".csv", ".tsv", ".eml"}
+                ".txt", ".csv", ".tsv", ".eml", ".vtt", ".srt"}
 MAX_UPLOAD = int(os.environ.get("PII_SHIELD_MAX_UPLOAD_MB", "300")) * 1024 * 1024  # all files of one scan together
 MAX_TEXT = 2 * 1024 * 1024  # gold labels, transcriptions, text to rehydrate
 MAX_PROMPT = 100_000  # characters of one prompt given to the guard

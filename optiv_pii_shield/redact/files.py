@@ -524,8 +524,14 @@ def mask_eml(doc: Document, findings: list[Finding], out: Path, settings: Settin
     return _write_text(doc, plain.build_eml(plain.read_eml(Path(doc.path)), _new_by_anchor(doc, findings)), out, needles)
 
 
+def mask_transcript(doc: Document, findings: list[Finding], out: Path, settings: Settings, needles: Needles | None = None) -> Path:
+    from ..extract import transcript
+
+    return _write_text(doc, transcript.build(transcript.read(Path(doc.path)), _new_by_anchor(doc, findings)), out, needles)
+
+
 MASKERS = {"pdf": mask_pdf, "docx": mask_docx, "pptx": mask_pptx, "xlsx": mask_xlsx, "image": mask_image,
-           "text": mask_text, "csv": mask_csv, "eml": mask_eml}
+           "text": mask_text, "csv": mask_csv, "eml": mask_eml, "transcript": mask_transcript}
 
 
 def masked_path(doc: Document, out_dir: Path) -> Path:
