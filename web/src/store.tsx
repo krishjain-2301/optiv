@@ -15,7 +15,7 @@ export const DEFAULT_SETTINGS: ScanSettings = {
 };
 const NO_META: Meta = {
   default_operator: "", profiles: [], entities: [], max_upload_mb: 300, markings: [], org_terms: 0,
-  guard_policy: { source_code: "block", markings: "block", block_categories: [], max_bytes: 0 },
+  guard_policy: { source_code: "block", markings: "block", block_categories: [], max_bytes: 0, protected: "block" },
 };
 /** Secrets are typed in for one session and never written to the browser's storage. */
 const SECRETS = { vault_passphrase: null, token_key: null };

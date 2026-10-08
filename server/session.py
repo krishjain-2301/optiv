@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -15,9 +16,11 @@ from pathlib import Path
 
 from optiv_pii_shield import RunResult, Settings, audit, replay, run, workspace
 from optiv_pii_shield.errors import ModelMissing, RunCancelled
+from optiv_pii_shield.extract import extract
 from optiv_pii_shield.guard import Guard, GuardBusy
 from optiv_pii_shield.pipeline import REVIEW_STAGES, STAGES, _unique, apply_review, stage_of
 from optiv_pii_shield.redact.tokens import rehydrate
+from optiv_pii_shield.registry import Registry
 from optiv_pii_shield.review import Addition, Decision
 
 log = logging.getLogger(__name__)
@@ -93,7 +96,8 @@ class Session:
         self.gold: Path | None = None
         self.transcriptions: dict[str, str] = {}  # file -> hand transcription, for structure retention
         self.cache: dict = {}  # payloads derived from the result, dropped with it
-        self.guard = Guard()  # the prompt guard's conversation: in memory only, independent of the run
+        self.registry = Registry()  # fingerprints of protected documents: a file that outlives the session
+        self.guard = Guard(self.registry)  # the prompt guard's conversation: in memory only, independent of the run
 
     # ------------------------------------------------------------------------- lifecycle
     def open(self) -> None:
@@ -255,6 +259,36 @@ class Session:
             return self.guard.check(text, settings, policy, wait=10)
         except GuardBusy as exc:
             raise Busy(busy) from exc
+
+    def register(self, uploads: list[tuple[str, bytes]], name: str, text: str, operator: str | None) -> dict[str, str]:
+        """Register files and/or pasted text as protected content. A file is read the way a scan
+        reads it (OCR included), fingerprinted and deleted; only the fingerprints are kept.
+        Returns the files that could not be registered, with the reason."""
+        busy = "a scan is running; documents can be registered when it has finished"
+        if (self.job is not None and self.job.state in ACTIVE) or not self.guard.lock.acquire(timeout=10):
+            raise Busy(busy)
+        errors: dict[str, str] = {}
+        operator = operator or Settings().operator
+        try:
+            if text.strip():
+                try:
+                    self.registry.add(name or "pasted text", text, operator)
+                except ValueError as exc:
+                    errors[name or "pasted text"] = str(exc)
+            for filename, content in uploads:
+                with tempfile.TemporaryDirectory(dir=self.work) as tmp:
+                    path = Path(tmp) / Path(filename).name
+                    path.write_bytes(content)
+                    try:
+                        doc = extract(path, Settings())
+                        self.registry.add(Path(filename).name, "\n".join(s.text for s in doc.spans), operator)
+                    except ModelMissing:
+                        raise
+                    except Exception as exc:  # one unreadable file does not stop the others
+                        errors[filename] = str(exc) if isinstance(exc, ValueError) else f"could not be read: {type(exc).__name__}: {exc}"
+        finally:
+            self.guard.lock.release()
+        return errors
 
     def replay(self, cap: int) -> dict:
         """The Samsung scenarios under a size cap and under the guard (optiv_pii_shield/replay.py).

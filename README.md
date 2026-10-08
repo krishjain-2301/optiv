@@ -253,12 +253,26 @@ what gets sent. The answer is pasted back and its tokens become values again.
   |---|---|---|
   | Source code | block | `detect/code.py` tells that a prompt is code, and roughly which language, from the shape of its lines. It cannot tell whether the code is confidential, so all of it is refused |
   | Classification marking | block | "Confidential", "Internal Use Only", "Do Not Distribute" and the like (`detect/markings.py`). A single word counts only where it is used as a marking |
+  | Protected content | block | The prompt shares ten consecutive words, or thirty in all, with a document registered as confidential (below) |
   | Blocked categories | none | Categories whose presence refuses the prompt instead of being replaced, for example cards or confidential terms |
   | Size limit | none | A larger prompt is refused unread. A blunt control, there for comparison |
 
-  Source code and markings can be set to *warn* (values are replaced, the sender is told) or *allow*.
+  Source code, markings and protected content can be set to *warn* (values are replaced, the sender is told) or *allow*.
 - **It does not send anything.** The safe text is copied by hand into the LLM. Nothing forces a prompt
   through the guard: that would take a browser extension or a network proxy.
+
+**Protected content.** A trade secret has no shape a rule can match, but text *copied* from a known document
+can be recognised. Under the page's Protected content step a confidential document (any format a scan reads,
+or pasted text) is read on this machine, reduced to fingerprints and deleted. A fingerprint is a keyed hash of
+five consecutive words, so case, punctuation and line breaks do not matter (`optiv_pii_shield/registry.py`).
+A prompt that copies from a registered document is refused, with the document's name and the lines that
+overlap.
+
+- The registry is a JSON file that outlives the server and is not deleted with the session:
+  `$PII_SHIELD_REGISTRY`, else `~/.pii_shield/registry.json`. It holds names and fingerprints, never text.
+- It recognises copied wording only. A paraphrase, a translation or a summary is not caught.
+- A fingerprint is not the text, but someone holding both the registry file and a candidate text can test
+  whether that text was registered. Keep the file where the documents themselves would be kept.
 
 **The Samsung replay.** In March 2023 three Samsung engineers pasted source code and the contents of a meeting
 into a public chatbot; the company's first control was a cap of 1,024 bytes per prompt. The page's last step
@@ -307,6 +321,7 @@ see [Held-out set](#held-out-set).
 | `PII_SHIELD_TOKEN_KEY` | Key for stable tokens across runs |
 | `PII_SHIELD_SIGNING_KEY` | Path of an Ed25519 private key (`keygen`); set: run manifests are signed |
 | `PII_SHIELD_ORG_CONFIG` | Another organisation vocabulary file |
+| `PII_SHIELD_REGISTRY` | Where the registry of protected documents is kept (default `~/.pii_shield/registry.json`) |
 | `PII_SHIELD_MAX_UPLOAD_MB` | Dashboard upload limit for one scan (default 300) |
 | `PII_SHIELD_REC_MODEL`, `PII_SHIELD_FACE_MODEL` | Another copy of a model file (its digest is then not checked) |
 
@@ -325,7 +340,7 @@ background thread; the page shows its stage, page-by-page progress and elapsed t
 | Category | Mode | Steps |
 |---|---|---|
 | Workspace | New scan | Sources, Detection policy (thresholds, profile, verification, pictures, vault, token key), Run |
-| | Prompt guard | Check a prompt, Restore the answer, Conversation, Policy, Samsung replay |
+| | Prompt guard | Check a prompt, Restore the answer, Conversation, Policy, Protected content, Samsung replay |
 | Analytics | Overview | Summary, Files, Pipeline |
 | | Exposure & risk | Ranking, Page heatmap, Residual risk |
 | | Findings | Breakdown, Register, In context, Dropped candidates |
@@ -500,7 +515,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 221 tests, a few minutes on CPU
+pytest -q            # 231 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -521,6 +536,8 @@ cd web; npm run typecheck
   placeholders that are not secrets; six kinds of code recognised and five kinds of prose left alone.
 - **Guard policy** (`tests/test_guard_policy.py`): code, markings, blocked categories and the size limit each
   refuse a prompt; a refused prompt issues no tokens; confidential terms; the policy over HTTP.
+- **Protected content** (`tests/test_registry.py`): no text in the registry file; copied wording recognised
+  whatever its case and layout; a paraphrase is not; the guard refuses, warns or allows; the registry over HTTP.
 - **Replay** (`tests/test_replay.py`): the outcome of each Samsung scenario under the cap and under the guard.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
@@ -547,6 +564,7 @@ optiv_pii_shield/
                        copies), leakcheck (text gate), verify (re-OCR of masked copies)
   review.py            review queue, reviewer decisions and additions
   guard.py             prompt guard: a prompt's values replaced by tokens, and the answer's put back
+  registry.py          protected content: documents registered by fingerprint, and what a text overlaps
   replay.py            the Samsung incidents of 2023 under a size cap and under the guard
   audit.py             hash-chained audit log, run manifest, signing, verify-run
   exposure.py          exposure score and residual risk

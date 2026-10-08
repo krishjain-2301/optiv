@@ -80,9 +80,10 @@ class GuardPolicy:
     markings: str = "block"  # block | warn | allow: a prompt carrying a classification marking
     block_categories: list[str] = field(default_factory=list)  # a value of these categories refuses the prompt
     max_bytes: int = 0  # a larger prompt is refused unread; 0: no limit
+    protected: str = "block"  # block | warn | allow: a prompt that overlaps a registered document (registry.py)
 
     def __post_init__(self):
-        for name in ("source_code", "markings"):
+        for name in ("source_code", "markings", "protected"):
             if getattr(self, name) not in ACTIONS:
                 raise ValueError(f"guard policy: {name} must be one of {', '.join(ACTIONS)}")
         if self.max_bytes < 0:
@@ -117,7 +118,7 @@ def load_org_config(path: str | Path | None = None) -> dict:
     for key in ("confidential_terms", "markings"):
         data[key] = [str(x) for x in data.get(key) or []]
     data["guard_policy"] = dict(data.get("guard_policy") or {})
-    unknown = set(data["guard_policy"]) - {"source_code", "markings", "block_categories", "max_bytes"}
+    unknown = set(data["guard_policy"]) - {"source_code", "markings", "block_categories", "max_bytes", "protected"}
     if unknown:
         raise ValueError(f"{p}: guard_policy has unknown keys {sorted(unknown)}")
     data["path"] = str(p)

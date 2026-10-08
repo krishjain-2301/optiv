@@ -1,10 +1,10 @@
-// Workspace · Prompt guard: check a prompt -> restore the answer -> conversation -> policy -> Samsung replay.
+// Workspace · Prompt guard: check a prompt -> restore the answer -> conversation -> policy -> protected content -> Samsung replay.
 // Text typed or pasted for an LLM goes through the same detection as a file and comes back with
 // its values replaced, or is refused by the policy; the answer gets its values back from the
 // tokens this conversation issued.
-import { Ban, Check, Copy, KeyRound, Play, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { Ban, Check, Copy, Fingerprint, KeyRound, Play, RotateCcw, ShieldCheck, Trash2, Upload } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { api, type GuardAction, type GuardPolicy, type GuardResult, type GuardState, type Rehydrated, type Replay } from "../api";
+import { api, type GuardAction, type GuardPolicy, type GuardResult, type GuardState, type RegistryState, type Rehydrated, type Replay } from "../api";
 import { Meter } from "../components/charts";
 import { MultiSelect, Select } from "../components/controls";
 import { DataTable } from "../components/table";
@@ -22,6 +22,7 @@ three weeks after his contract ended. She can be reached at priya.raman@cadence-
 or on (415) 555-0142. Raman escalated it to the access team the same day.`;
 const RULE: Record<string, string> = {
   source_code: "Source code", marking: "Classification marking", category: "Blocked category", size: "Size limit",
+  protected: "Protected content",
 };
 const ACTIONS = [
   { value: "block", label: "Block the prompt" },
@@ -222,6 +223,7 @@ function Policy({ policy, setPolicy, reset }: { policy: GuardPolicy; setPolicy: 
         <Card title="When the whole prompt is refused" sub="Personal data and credentials are always replaced; these decide when that is not enough">
           <Select label="A prompt that is source code" value={policy.source_code} options={ACTIONS} onChange={(v) => setPolicy({ source_code: v as GuardAction })} />
           <Select label="A prompt that carries a classification marking" value={policy.markings} options={ACTIONS} onChange={(v) => setPolicy({ markings: v as GuardAction })} />
+          <Select label="A prompt that copies from a registered document" value={policy.protected} options={ACTIONS} onChange={(v) => setPolicy({ protected: v as GuardAction })} />
           <MultiSelect label="Categories that refuse the prompt instead of being replaced" all="None: every category is replaced"
             options={meta.entities.map((e) => ({ value: e, label: pretty(e) }))} selected={policy.block_categories} onChange={(v) => setPolicy({ block_categories: v })} />
           <label className="field" style={{ maxWidth: "16rem" }}>
@@ -246,6 +248,73 @@ function Policy({ policy, setPolicy, reset }: { policy: GuardPolicy; setPolicy: 
         </div>
       </Row>
       <Muted>A size limit alone is a blunt control: it refuses a long harmless prompt and lets a short secret through. It is here for comparison and for organisations that want both.</Muted>
+    </>
+  );
+}
+
+/** Confidential documents registered by fingerprint: a prompt that copies from one is refused. */
+function ProtectedContent() {
+  const { settings } = useStore();
+  const [reg, setReg] = useState<RegistryState | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [name, setName] = useState("");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { api.registry().then(setReg).catch((e: Error) => setError(e.message)); }, []);
+  const act = async (call: () => Promise<RegistryState>, done?: () => void) => {
+    setError(null);
+    setBusy(true);
+    try {
+      setReg(await call());
+      done?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const register = () => act(() => api.register(files, name, text, settings.operator), () => { setFiles([]); setName(""); setText(""); });
+  const docs = reg?.documents ?? [];
+  return (
+    <>
+      <Kpis tiles={[
+        { label: "Registered documents", value: int(docs.length), sub: "a prompt that copies from one is refused" },
+        { label: "Fingerprints", value: int(docs.reduce((a, d) => a + d.fingerprints, 0)), sub: "keyed hashes of five-word runs" },
+        { label: "Text kept", value: "None", status: "good", sub: "a document is fingerprinted, then deleted" },
+      ]} />
+      <Row cols="2fr 3fr">
+        <Card title="Register a confidential document" sub="It is read on this machine, reduced to fingerprints and deleted">
+          <label className="btn">
+            <Upload size={16} /> Choose files
+            <input type="file" multiple hidden onChange={(e) => { setFiles([...(e.target.files ?? [])]); e.target.value = ""; }} />
+          </label>
+          {files.length > 0 && <Muted>{files.map((f) => f.name).join(", ")}</Muted>}
+          <label className="field">
+            <span className="field-label">Or paste text, with a name for it</span>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="for example: Q3 yield review notes" />
+          </label>
+          <textarea className="input" rows={6} value={text} onChange={(e) => setText(e.target.value)} placeholder="Text to protect" />
+          <div className="inline">
+            <button className="btn primary" onClick={register} disabled={busy || (!files.length && !text.trim())}><Fingerprint size={16} /> {busy ? "Registering…" : "Register"}</button>
+          </div>
+          {error && <Notice kind="error">{error}</Notice>}
+          {Object.entries(reg?.errors ?? {}).map(([f, why]) => <Notice kind="error" key={f}>{f}: {why}</Notice>)}
+        </Card>
+        <Card title="Registered documents" sub={reg ? `Stored in ${reg.path}` : "Loading…"}>
+          <DataTable rows={docs} empty="Nothing is registered yet." cols={[
+            { key: "name", label: "Document", value: (d) => d.name, wrap: true, width: "18rem" },
+            { key: "words", label: "Words", value: (d) => d.words, align: "right" },
+            { key: "prints", label: "Fingerprints", value: (d) => d.fingerprints, align: "right" },
+            { key: "when", label: "Registered (UTC)", value: (d) => d.registered.replace("T", " ").slice(0, 16) },
+            { key: "who", label: "By", value: (d) => d.operator },
+            { key: "rm", label: "", value: () => null, align: "right", render: (d) => (
+              <button className="btn icon" aria-label={`Remove ${d.name}`} disabled={busy} onClick={() => act(() => api.unregister(d.id))}><Trash2 size={15} /></button>
+            ) },
+          ]} />
+        </Card>
+      </Row>
+      <Muted>A prompt overlaps a registered document when it shares ten consecutive words with it, or thirty in all; case, punctuation and line breaks do not matter. This recognises copied wording only: a paraphrase, a translation or a summary is not caught. The registry outlives the server and is not deleted with the session.</Muted>
     </>
   );
 }
@@ -340,12 +409,12 @@ function SamsungReplay({ tryPrompt }: { tryPrompt: (text: string) => void }) {
 
 export default function Guard() {
   const { meta } = useStore();
-  const [step, setStep] = useStep(5);
+  const [step, setStep] = useStep(6);
   const [text, setText] = useState("");
   const [result, setResult] = useState<GuardResult | null>(null);
   const [state, setState] = useState<GuardState | null>(null);
   const [own, setOwn] = useState<GuardPolicy | null>(savedPolicy);
-  const policy = own ?? meta.guard_policy;
+  const policy = { ...meta.guard_policy, ...own }; // a policy saved before a rule existed takes that rule's default
   const setPolicy = (patch: Partial<GuardPolicy>) => {
     const next = { ...policy, ...patch };
     localStorage.setItem(POLICY_KEY, JSON.stringify(next));
@@ -366,12 +435,13 @@ export default function Guard() {
   return (
     <>
       <PageHeader section="Workspace" title="Prompt guard" subtitle="Check what you are about to send to an LLM, send the safe text instead, and get the values back in the answer." />
-      <Steps steps={["Check a prompt", "Restore the answer", "Conversation", "Policy", "Samsung replay"]} active={step} onChange={setStep} />
+      <Steps steps={["Check a prompt", "Restore the answer", "Conversation", "Policy", "Protected content", "Samsung replay"]} active={step} onChange={setStep} />
       {step === 0 && <CheckPrompt text={text} setText={setText} result={result} setResult={setResult} policy={policy} refresh={refresh} />}
       {step === 1 && <Restore state={state} refresh={refresh} />}
       {step === 2 && <Conversation state={state} forget={forget} />}
       {step === 3 && <Policy policy={policy} setPolicy={setPolicy} reset={resetPolicy} />}
-      {step === 4 && <SamsungReplay tryPrompt={(t) => { setText(t); setResult(null); setStep(0); }} />}
+      {step === 4 && <ProtectedContent />}
+      {step === 5 && <SamsungReplay tryPrompt={(t) => { setText(t); setResult(null); setStep(0); }} />}
     </>
   );
 }

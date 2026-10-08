@@ -48,7 +48,7 @@ def test_marking_line_is_reported():
 # -------------------------------------------------------------------------------- policy
 def test_default_policy_is_the_organisations():
     p = GuardPolicy.default()
-    assert (p.source_code, p.markings, p.block_categories, p.max_bytes) == ("block", "block", [], 0)
+    assert (p.source_code, p.markings, p.block_categories, p.max_bytes, p.protected) == ("block", "block", [], 0, "block")
     with pytest.raises(ValueError):
         GuardPolicy(source_code="maybe")
     with pytest.raises(ValueError):
@@ -149,7 +149,8 @@ def client():
 
 def test_policy_over_http(client):
     meta = client.get("/api/settings").json()
-    assert meta["guard_policy"] == {"source_code": "block", "markings": "block", "block_categories": [], "max_bytes": 0}
+    assert meta["guard_policy"] == {"source_code": "block", "markings": "block", "block_categories": [], "max_bytes": 0,
+                                    "protected": "block"}
     assert "Confidential" in meta["markings"] and "CONFIDENTIAL_TERM" in meta["entities"]
     r = client.post("/api/guard/check", json={"text": CODE}).json()
     assert r["verdict"] == "blocked" and r["safe_text"] == ""

@@ -313,11 +313,12 @@ export interface GuardPolicy {
   block_categories: string[];
   /** 0: no limit */
   max_bytes: number;
+  protected: GuardAction;
 }
 
 /** One reason a prompt was refused, or one thing the sender is warned about. */
 export interface GuardReason {
-  rule: "source_code" | "marking" | "category" | "size";
+  rule: "source_code" | "marking" | "category" | "size" | "protected";
   detail: string;
   category?: string;
 }
@@ -384,6 +385,8 @@ export interface GuardResult {
   blocks: GuardReason[];
   warnings: GuardReason[];
   markings: { line: number; text: string; why: string }[];
+  /** registered documents the prompt overlaps */
+  protected: { id: string; name: string; words: number; longest: number; share: number; lines: [number, number][] }[];
   policy: GuardPolicy;
   findings: GuardFinding[];
   code: GuardCode;
@@ -439,6 +442,23 @@ export interface Replay {
     cap_refused_harmless: number;
     guard_refused_harmless: number;
   };
+}
+
+/** A registered confidential document: its fingerprints are kept, its text is not. */
+export interface ProtectedDoc {
+  id: string;
+  name: string;
+  words: number;
+  fingerprints: number;
+  registered: string;
+  operator: string;
+}
+
+export interface RegistryState {
+  documents: ProtectedDoc[];
+  path: string;
+  /** per file that could not be registered */
+  errors?: Record<string, string>;
 }
 
 export interface GuardState {
@@ -530,5 +550,15 @@ export const api = {
   guardRehydrate: (text: string, operator: string | null) =>
     post<Rehydrated>("/api/guard/rehydrate", { text, operator, purpose: "LLM answer" }),
   guardReplay: (cap: number) => get<Replay>(`/api/guard/replay?cap=${cap}`),
+  registry: () => get<RegistryState>("/api/registry"),
+  register: (files: File[], name: string, text: string, operator: string | null) => {
+    const form = new FormData();
+    for (const f of files) form.append("files", f);
+    form.append("name", name);
+    form.append("text", text);
+    if (operator) form.append("operator", operator);
+    return post<RegistryState>("/api/registry", form);
+  },
+  unregister: (id: string) => post<RegistryState>(`/api/registry/${encodeURIComponent(id)}`, undefined, "DELETE"),
   guardForget: () => post<GuardState>("/api/guard", undefined, "DELETE"),
 };

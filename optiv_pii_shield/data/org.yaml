@@ -125,6 +125,7 @@ markings:
 
 # What the prompt guard does with a prompt beyond replacing values.
 #   source_code, markings: block | warn | allow
+#   protected: block | warn | allow, for a prompt that overlaps a registered confidential document
 #   block_categories: categories whose presence refuses the prompt instead of being replaced
 #   max_bytes: a larger prompt is refused unread (0: no limit)
 guard_policy:
@@ -132,6 +133,7 @@ guard_policy:
   markings: block
   block_categories: []
   max_bytes: 0
+  protected: block
 
 # Internal identifier formats. Each becomes an L1 rule: name, entity (category), pattern, score.
 # OCR glues neighbours on ("EMP-41877sV", "EMP-41077IAM"), so there is no trailing \b; O/I/l read

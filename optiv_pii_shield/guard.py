@@ -5,8 +5,8 @@ layers, tokens and leak gate, and comes back with every value replaced. The mapp
 value stays in memory here, so the model's answer can be given its values back afterwards.
 
 Replacing values is not always enough. A policy (``config.GuardPolicy``) refuses the whole prompt
-when it is source code, carries a classification marking, holds a value of a category the
-organisation never lets out, or is larger than a limit. A refused prompt yields no text to send.
+when it is source code, carries a classification marking, overlaps a registered confidential
+document, holds a value of a category the organisation never lets out, or is larger than a limit. A refused prompt yields no text to send.
 
 One ``Guard`` is one conversation: a person or value gets the same token in every prompt, and a
 person redacted once is looked for in every later prompt, by surname alone too.
@@ -61,7 +61,8 @@ def _lines(blocks: list[list[int]]) -> str:
 
 
 class Guard:
-    def __init__(self) -> None:
+    def __init__(self, registry=None) -> None:
+        self.registry = registry  # registry.Registry of protected documents, or None
         self.lock = threading.Lock()  # the detector is shared with scans: one user of it at a time
         self.reset()
 
@@ -98,6 +99,7 @@ class Guard:
         components: list[str] = []
         found = {"detected": False, "lines": 0, "code_lines": 0, "share": 0.0, "languages": [], "blocks": []}
         marks: list[dict] = []
+        overlaps: list[dict] = []
         findings, doc, offsets = {NAME: []}, None, {}
 
         too_large = bool(policy.max_bytes) and size > policy.max_bytes
@@ -106,6 +108,7 @@ class Guard:
         else:
             found = code.analyse(text)
             marks = markings.find(text, ORG["markings"])
+            overlaps = self.registry.match(text) if self.registry is not None and policy.protected != "allow" else []
             doc, offsets = to_document(text)
             # People already redacted in this conversation are looked for again, in any form.
             s = copy.copy(settings)
@@ -120,6 +123,10 @@ class Guard:
             if marks and policy.markings != "allow":
                 what = {"rule": "marking", "detail": "; ".join(f"“{m['text']}” on line {m['line']}" for m in marks)}
                 (blocks if policy.markings == "block" else warnings).append(what)
+            for hit in overlaps:
+                what = {"rule": "protected", "detail": f"{hit['words']:,} words in common with the registered document "
+                        f"“{hit['name']}” at {_lines(hit['lines'])}"}
+                (blocks if policy.protected == "block" else warnings).append(what)
             held = Counter(f.entity_type for f in findings[NAME] if f.decision in LIVE)
             for category in policy.block_categories:
                 if held.get(category):
@@ -167,7 +174,7 @@ class Guard:
             shown.append({"entity_type": f.entity_type, "text": f.text, "token": None if blocks else f.token, "score": f.score,
                           "decision": f.decision, "layer": f.layer, "reasons": f.reasons, "start": a,
                           "end": a + f.end - f.start, "line": text.count("\n", 0, a) + 1})
-        return {**entry, "safe_text": safe, "findings": shown, "code": found, "markings": marks, "blocks": blocks,
+        return {**entry, "safe_text": safe, "findings": shown, "code": found, "markings": marks, "protected": overlaps, "blocks": blocks,
                 "warnings": warnings, "policy": asdict(policy), "scrubbed": scrubbed, "restarted": restarted,
                 "dropped": sum(f.decision == "drop" for f in findings[NAME]), "components": components,
                 "elapsed": round(time.perf_counter() - t0, 3)}

@@ -12,6 +12,7 @@
     /api/guard/check     POST a prompt: its values replaced by tokens, and what was found
     /api/guard/rehydrate POST an answer holding those tokens: original values put back
     /api/guard/replay    GET the Samsung scenarios under a size cap and under the guard
+    /api/registry        GET protected documents · POST register files or text · DELETE /{id}
     /api/session         DELETE this session's files
 
 Everything else is the built dashboard (web/dist) with index.html as the fallback for its routes.
@@ -35,6 +36,7 @@ from urllib.parse import urlsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -339,12 +341,13 @@ class GuardPolicyBody(BaseModel):
     markings: str = Field(GuardPolicy.default().markings, pattern="^(block|warn|allow)$")
     block_categories: list[str] = Field(default_factory=lambda: list(GuardPolicy.default().block_categories), max_length=60)
     max_bytes: int = Field(GuardPolicy.default().max_bytes, ge=0, le=MAX_PROMPT * 4)
+    protected: str = Field(GuardPolicy.default().protected, pattern="^(block|warn|allow)$")
 
     def to_policy(self) -> GuardPolicy:
         unknown = set(self.block_categories) - set(OUTPUT_ENTITIES)
         if unknown:
             raise ValueError(f"unknown category '{sorted(unknown)[0]}'")
-        return GuardPolicy(self.source_code, self.markings, list(self.block_categories), self.max_bytes)
+        return GuardPolicy(self.source_code, self.markings, list(self.block_categories), self.max_bytes, self.protected)
 
 
 class GuardCheck(BaseModel):
@@ -393,6 +396,47 @@ def guard_replay(cap: int = Query(SAMSUNG_CAP, ge=1, le=MAX_PROMPT * 4)):
 def guard_forget():
     session.guard.reset()
     return _json(session.guard.state())
+
+
+# ---------------------------------------------------------------------- protected content
+def _registry() -> dict:
+    return {"documents": session.registry.list(), "path": str(session.registry.path)}
+
+
+@app.get("/api/registry")
+def registry_list():
+    return _json(_registry())
+
+
+@app.post("/api/registry")
+async def registry_add(request: Request, files: list[UploadFile] = File(default=[]), name: str = Form("", max_length=200),
+                       text: str = Form("", max_length=MAX_TEXT), operator: str = Form("", max_length=80)):
+    if not files and not text.strip():
+        raise HTTPException(422, "nothing to register: add a file or paste text")
+    bad = [f.filename for f in files if Path(f.filename or "").suffix.lower() not in UPLOAD_TYPES]
+    if bad:
+        raise HTTPException(422, f"unsupported file type: {', '.join(map(str, bad))}")
+    if int(request.headers.get("content-length") or 0) > MAX_UPLOAD + 2 * MAX_TEXT:
+        raise HTTPException(413, f"the files are larger than {MAX_UPLOAD // (1024 * 1024)} MB together")
+    uploads, left = [], MAX_UPLOAD
+    for f in files:
+        content = await _read(f, left, "the files together")
+        left -= len(content)
+        uploads.append((f.filename, content))
+    try:
+        errors = await run_in_threadpool(session.register, uploads, name.strip(), text, operator.strip() or None)
+    except Busy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ModelMissing as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return _json({**_registry(), "errors": errors})
+
+
+@app.delete("/api/registry/{doc_id}")
+def registry_remove(doc_id: str):
+    if not session.registry.remove(doc_id):
+        raise HTTPException(404, "no such registered document")
+    return _json(_registry())
 
 
 # ----------------------------------------------------------------------------- evaluation
