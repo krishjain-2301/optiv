@@ -329,6 +329,7 @@ export interface GuardEvent {
   bytes?: number;
   values?: number;
   findings?: number;
+  code_lines?: number;
   review?: number;
   profile?: string;
   by_category?: Record<string, number>;
@@ -338,11 +339,22 @@ export interface GuardEvent {
   purpose?: string;
 }
 
+/** Whether the prompt is source code, and where: reported, not judged. Lines are 1-based. */
+export interface GuardCode {
+  detected: boolean;
+  lines: number;
+  code_lines: number;
+  share: number;
+  languages: string[];
+  blocks: [number, number][];
+}
+
 export interface GuardResult {
   id: number;
   verdict: "clean" | "redacted";
   safe_text: string;
   findings: GuardFinding[];
+  code: GuardCode;
   chars: number;
   bytes: number;
   values: number;

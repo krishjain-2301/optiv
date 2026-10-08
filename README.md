@@ -169,6 +169,13 @@ when layers agree, and routes by score:
 Checksums only raise or lower confidence, never veto: a test-range SSN (`9xx`) or a `555` phone next to a label
 is still caught, because in production data it would be real.
 
+**Credentials in code and configuration.** Known key formats (AWS, GitHub, GitLab, Slack, Stripe, Google, npm,
+PyPI, Hugging Face and others), private key blocks with or without their END line, JWTs, the password inside
+`scheme://user:password@host`, `Authorization` and `X-API-Key` headers, and any quoted or `.env` value assigned
+to a name that says it is a secret (`db_password`, `API_KEY`, `clientSecret`). The name and the value are both
+checked (`detect/secrets.py`): `password_file`, `max_tokens`, `os.environ[...]` and `<your-password>` are not
+secrets. A quoted random-looking string with no name to go by lands in the review band.
+
 **Categories.** Person, e-mail, phone, address (street-suffix and Indian PIN-code forms), date of birth,
 employee and vendor IDs, SSN, passport, PAN, Aadhaar, PESEL, UK National Insurance number, voter ID, driving
 licence, tax IDs (TIN, EIN, NIP, GSTIN), card, IBAN, bank account / IFSC, UPI ID, IP address, credentials, and
@@ -234,6 +241,10 @@ what gets sent. The answer is pasted back and its tokens become values again.
 - **Only issued tokens are restored.** A token this conversation did not issue is left as it is.
 - **Nothing is stored.** No prompt or answer is kept. Tokens and their values live in memory until the
   server stops or the conversation is forgotten; the log holds counts, never text.
+- **Source code is recognised and said so.** `detect/code.py` tells that a prompt is code (and roughly which
+  language) from the shape of its lines, and the page reports where. Credentials and personal data inside the
+  code are replaced, with quotes and syntax left intact. Whether the code itself is confidential is not
+  something a rule can tell: the page says so and leaves the decision to the sender.
 - **It does not send anything.** The safe text is copied by hand into the LLM. Nothing forces a prompt
   through the guard: that would take a browser extension or a network proxy.
 
@@ -459,7 +470,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 151 tests, a few minutes on CPU
+pytest -q            # 189 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -476,6 +487,8 @@ cd web; npm run typecheck
   line, an edited line and an edited output are each detected); signing; keyed tokens, profiles, rehydration.
 - **Prompt guard** (`tests/test_guard.py`): a prompt keeps its shape, tokens hold across prompts, known people
   are found again, only issued tokens are restored, the log holds no text.
+- **Code and secrets** (`tests/test_code_and_secrets.py`): credentials in code, config and URLs; names and
+  placeholders that are not secrets; six kinds of code recognised and five kinds of prose left alone.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
 
@@ -492,7 +505,8 @@ optiv_pii_shield/
   modelstore.py        model files pinned by SHA-256
   extract/             sniff, pdf, docx, pptx, xlsx, image, plain (text/CSV/e-mail), ooxml walkers, layout
                        (tables/regions), ocr backends, visual (faces, QR codes)
-  detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver
+  detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver, secrets
+                       (names and values of credentials), code (is this text source code?)
   redact/              tokens (vault, keyed tokens, profiles, rehydrate), text (LLM output), files (masked
                        copies), leakcheck (text gate), verify (re-OCR of masked copies)
   review.py            review queue, reviewer decisions and additions

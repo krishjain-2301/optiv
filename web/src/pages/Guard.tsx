@@ -64,10 +64,17 @@ function CheckPrompt({ text, setText, result, setResult, refresh }: {
             sub: result.verdict === "clean" ? "nothing personal was found" : "send the safe text, not the prompt" },
           { label: "Values replaced", value: int(result.values), sub: `${int(result.findings.length)} place(s) in the prompt` },
           { label: "Uncertain", value: int(result.review), status: result.review ? "warning" : "good", sub: "replaced anyway (fail closed)" },
-          { label: "Dropped candidates", value: int(result.dropped), sub: "scored below the review threshold" },
+          { label: "Source code", value: result.code.detected ? `${int(result.code.code_lines)} lines` : "None", status: result.code.detected ? "warning" : "good",
+            sub: result.code.detected ? result.code.languages.join(", ") || "language not recognised" : "the prompt reads as prose" },
           { label: "Prompt size", value: `${int(result.chars)} chars`, sub: `${int(result.bytes)} bytes` },
           { label: "Checked in", value: `${result.elapsed.toFixed(2)} s`, sub: "on this machine, no network" },
         ]} />
+      )}
+      {result?.code.detected && (
+        <Notice kind="warning">
+          This prompt contains source code ({result.code.blocks.map(([a, b]) => (a === b ? `line ${a}` : `lines ${a} to ${b}`)).join(", ")}).
+          Credentials and personal data in it were replaced; the code itself was not, and whether it may leave the company is for you to judge.
+        </Notice>
       )}
       {result?.restarted && <Notice kind="warning">The profile or token key changed, so a new conversation was started: tokens issued before this prompt can no longer be restored.</Notice>}
       <Row>
@@ -159,6 +166,7 @@ function Conversation({ state, forget }: { state: GuardState | null; forget: () 
           { key: "values", label: "Values", value: (e) => (e.event === "check" ? e.values ?? 0 : e.count ?? 0), align: "right" },
           { key: "review", label: "Uncertain", value: (e) => e.review ?? null, align: "right" },
           { key: "bytes", label: "Bytes", value: (e) => e.bytes ?? null, align: "right" },
+          { key: "code", label: "Code lines", value: (e) => e.code_lines ?? null, align: "right" },
           { key: "cats", label: "Categories", wrap: true, width: "22rem",
             value: (e) => Object.entries(e.by_category ?? {}).map(([k, n]) => `${pretty(k)} ${n}`).join(", ") },
           { key: "who", label: "Operator", value: (e) => e.operator },

@@ -13,6 +13,7 @@ from typing import Callable, Optional
 from presidio_analyzer import AnalysisExplanation, EntityRecognizer, RecognizerResult
 
 from ..config import CONTEXT_WORDS, ORG
+from . import secrets as sec
 from . import validators as v
 from .names import gazetteer_names
 
@@ -34,6 +35,7 @@ class Rule:
     flags: int = 0
     min_digits: int = 0
     unless: str = ""  # skip matches overlapping a match of this (stricter) rule
+    accept: Optional[Callable[[re.Match], bool]] = None  # a check on the whole match, e.g. the name beside the value
 
     def __post_init__(self):
         self.regex = re.compile(self.pattern, self.flags)
@@ -44,8 +46,12 @@ def ctx(cat: str) -> tuple[str, ...]:
 
 
 RULES: list[Rule] = [
+    # "scheme://user:password@host": first, so that "password@host" is not read as an e-mail address.
+    Rule("secret_url_password", "CREDENTIAL",
+         r"\b[A-Za-z][A-Za-z0-9+.-]{1,20}://[^\s:/@\"'<>]{1,64}:([^\s@/\"'<>]{3,128})@(?=[A-Za-z0-9\[])", 0.85,
+         sec.check_secret_value, group=1),
     Rule("email", "EMAIL_ADDRESS", r"(?<![\w.+-])[A-Za-z0-9._%+'-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}(?![\w-])", 0.92,
-         v.check_mailbox),
+         v.check_mailbox, unless="secret_url_password"),
     # OCR damages e-mails in screenshots ("wilsong@acmeco-p com"): anything around an @ is suspect.
     Rule("email_ocr_damaged", "EMAIL_ADDRESS", r"(?<![\w.+-])[A-Za-z0-9._%+-]{2,} ?@ ?[A-Za-z0-9-]{2,}(?:[., -]{1,2}[A-Za-z0-9-]{2,}){0,3}", 0.55,
          unless="email"),  # fallback for OCR damage only; never crosses a line
@@ -80,7 +86,31 @@ RULES: list[Rule] = [
          r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----", 0.9),
     Rule("secret_assigned", "CREDENTIAL",
          r"(?i:\b(?:api[_ -]?key|secret(?:[_ -]?key)?|access[_ -]?token|auth[_ -]?token|bearer|password|passwd|pwd|client[_ -]?secret)"
-         r"[\"']?\s*(?:[:=]|is)\s*[\"']?)([^\s\"',;]{8,})", 0.75, group=1),
+         r"[\"']?\s*(?:[:=]|is)\s*[\"']?)([^\s\"',;]{8,})", 0.75, sec.check_secret_value, group=1),
+    Rule("secret_known_more", "CREDENTIAL",
+         r"\bglpat-[A-Za-z0-9_-]{20,}|\bnpm_[A-Za-z0-9]{36}\b|\bpypi-[A-Za-z0-9_-]{50,}|\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"
+         r"|\bhf_[A-Za-z0-9]{30,}\b|\bshp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}\b|\bdop_v1_[a-f0-9]{64}\b|\bya29\.[A-Za-z0-9_-]{20,}"
+         r"|https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[A-Za-z0-9]+|(?<!\d)\d{8,10}:AA[A-Za-z0-9_-]{33}(?![\w-])"
+         r"|(?<=AccountKey=)[A-Za-z0-9+/]{40,}={0,2}"
+         r"|-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]+?(?:-----END PGP PRIVATE KEY BLOCK-----|\Z)"
+         r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[A-Za-z0-9+/=\s]+\Z", 0.9),
+    # Source code and configuration: the value is a secret because of the name it is assigned to
+    # (secrets.py), or because of where it sits (a URL's password, an Authorization header).
+    Rule("secret_in_code", "CREDENTIAL",
+         r"(?<![A-Za-z0-9_.-])(?P<k>[A-Za-z_][A-Za-z0-9_.-]{1,60})[\"']?\]?\s*(?:=>|:=|[:=])\s*"
+         r"(?P<q>[\"'`])(?P<v>(?:(?!(?P=q)).){4,200})(?P=q)", 0.6, sec.check_secret_value, group="v", accept=sec.named_secret),
+    Rule("secret_env", "CREDENTIAL",
+         r"(?m)^[ \t]*(?:export[ \t]+|set[ \t]+)?(?P<k>[A-Za-z_][A-Za-z0-9_]{2,60})[ \t]*=[ \t]*(?P<v>[^\s\"'`#;]{6,200})[ \t]*$",
+         0.55, sec.check_secret_value, group="v", accept=sec.named_secret),
+    Rule("secret_auth_header", "CREDENTIAL",
+         r"(?i:\b(?:authorization|x-api-key|x-auth-token|api-key)\b[\"']?\s*[:=]\s*[\"']?(?:(?:bearer|basic|token)\s+)?)"
+         r"([A-Za-z0-9._~+/=-]{12,})", 0.8, sec.check_secret_value, group=1),
+    Rule("secret_bearer", "CREDENTIAL", r"\b[Bb]earer\s+([A-Za-z0-9._~+/=-]{20,})", 0.7, sec.check_secret_value, group=1),
+    # A quoted random-looking string with no name to go by: review band, unless a context word confirms it.
+    Rule("secret_high_entropy", "CREDENTIAL", r"(?P<q>[\"'`])(?P<v>[A-Za-z0-9+/_=-]{24,200})(?P=q)", 0.3, sec.check_entropy,
+         ctx("CREDENTIAL"), group="v", accept=sec.mixed),
+    # The body of a key or certificate pasted without its BEGIN line.
+    Rule("pem_body", "CREDENTIAL", r"(?m)(?:^[A-Za-z0-9+/]{40,76}={0,2}[ \t]*(?:\n|\Z)){3,}", 0.5),
     # Bank details outside IBAN countries: an IFSC code names a branch and sits next to the account
     # number; a bare run of digits is an account number only when a label says so.
     Rule("in_ifsc", "BANK_ACCOUNT", r"\b[A-Z]{4}0[A-Z0-9]{6}\b", 0.45, None, ctx("BANK_ACCOUNT")),
@@ -162,6 +192,8 @@ def run_rules(text: str, entities: Optional[list[str]] = None, rules: Optional[l
         if entities and rule.entity not in entities:
             continue
         for m in rule.regex.finditer(text):
+            if rule.accept is not None and not rule.accept(m):
+                continue
             start, end = m.span(rule.group)
             spans_by_rule.setdefault(rule.name, []).append((start, end))
             if rule.unless and any(a < end and b > start for a, b in spans_by_rule.get(rule.unless, [])):

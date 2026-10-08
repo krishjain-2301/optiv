@@ -19,6 +19,7 @@ from collections import Counter
 
 from . import audit
 from .config import Settings
+from .detect import code
 from .detect.propagation import PersonIndex
 from .models import Document, Span
 from .pipeline import get_detector, locate_missed
@@ -120,6 +121,8 @@ class Guard:
             "review": sum(f.decision == "review" for f in live), "profile": settings.profile,
             "by_category": dict(Counter(f.entity_type for f in live)),
         }
+        found = code.analyse(text)  # reported, not judged: whether code may be sent is a policy matter
+        entry["code_lines"] = found["code_lines"]
         self._record(entry)
         shown = []
         for f in sorted(live, key=lambda f: offsets[f.span_id] + f.start):
@@ -127,7 +130,7 @@ class Guard:
             shown.append({"entity_type": f.entity_type, "text": f.text, "token": f.token, "score": f.score,
                           "decision": f.decision, "layer": f.layer, "reasons": f.reasons, "start": a,
                           "end": a + f.end - f.start, "line": text.count("\n", 0, a) + 1})
-        return {**entry, "safe_text": safe, "findings": shown, "scrubbed": scrubbed, "restarted": restarted,
+        return {**entry, "safe_text": safe, "findings": shown, "code": found, "scrubbed": scrubbed, "restarted": restarted,
                 "dropped": sum(f.decision == "drop" for f in findings[NAME]), "components": detector.components,
                 "elapsed": round(time.perf_counter() - t0, 3)}
 
