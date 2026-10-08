@@ -21,10 +21,10 @@ def secrets_in(text):
     ("config[\"apiKey\"] = 'k9Zq2Lm8Xw4Tn6Vb1Rc3'", "k9Zq2Lm8Xw4Tn6Vb1Rc3"),
     ('"client_secret": "a8f3K2m9Qz7Lp4Xw",', "a8f3K2m9Qz7Lp4Xw"),
     ("DATABASE_URL=postgres://app_user:Pr0d!Pass99@db.internal.example:5432/orders", "Pr0d!Pass99"),
-    ('conn = "mongodb+srv://admin:hunter2secret@cluster0.mongodb.net/test"', "hunter2secret"),
+    ('conn = "mongodb+srv://admin:' + "hunter2secret" + '@cluster0.db.example/test"', "hunter2secret"),  # made up, assembled here
     ("Authorization: Bearer abcDEF123456ghiJKL789012mnoPQR", "abcDEF123456ghiJKL789012mnoPQR"),
     ('headers = {"X-API-Key": "9f8e7d6c5b4a39281706f5e4d3c2b1a0"}', "9f8e7d6c5b4a39281706f5e4d3c2b1a0"),
-    ("token glpat-AbCdEfGhIjKlMnOpQrSt12 was pushed", "glpat-AbCdEfGhIjKlMnOpQrSt12"),
+    ("token glpat-" + "AbCdEfGhIjKlMnOpQrSt12 was pushed", "glpat-" + "AbCdEfGhIjKlMnOpQrSt12"),
     ('signature = "Zm9vYmFyMTIzNDU2Nzg5MEFCQ0RFRkdISUpLTE1OT1A="', "Zm9vYmFyMTIzNDU2Nzg5MEFCQ0RFRkdISUpLTE1OT1A="),
 ])
 def test_secrets_in_code_and_config(line, value):
