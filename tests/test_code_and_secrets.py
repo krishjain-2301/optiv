@@ -2,6 +2,7 @@
 and what the prompt guard reports about them)."""
 import pytest
 
+from optiv_pii_shield.config import GuardPolicy
 from optiv_pii_shield.detect import secrets as sec
 from optiv_pii_shield.detect.code import analyse
 from optiv_pii_shield.detect.rules import run_rules
@@ -134,7 +135,8 @@ def get_order(order_id):
 
 
 def test_guard_redacts_inside_code_and_leaves_the_code_working():
-    r = Guard().check(FLASK)
+    warn = GuardPolicy(source_code="warn")  # the default policy refuses code outright (test_guard_policy.py)
+    r = Guard().check(FLASK, policy=warn)
     assert r["code"]["detected"] and r["code"]["languages"] == ["Python"] and r["code_lines"] == r["code"]["code_lines"] > 5
     safe = r["safe_text"]
     for value in ("Priya Raman", "priya.raman@cadence-demo.example", "Pr0d!Pass99", STRIPE, "555-0142"):
@@ -143,7 +145,7 @@ def test_guard_redacts_inside_code_and_leaves_the_code_working():
     assert 'DB_URL = "postgres://app_user:[SECRET_U001]@db.internal.example:5432/orders"' in safe
     assert 'STRIPE_KEY = "[SECRET_U002]"' in safe and 'api_token = os.environ["API_TOKEN"]' in safe
     assert safe.count("\n") == FLASK.count("\n") and "def get_order(order_id):" in safe
-    again = Guard().check(safe)  # the safe text holds nothing further: tokens are not secrets
+    again = Guard().check(safe, policy=warn)  # the safe text holds nothing further: tokens are not secrets
     assert again["safe_text"] == safe
 
 

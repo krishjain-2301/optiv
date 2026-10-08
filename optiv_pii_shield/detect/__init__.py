@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import re
+from functools import lru_cache
 
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.predefined_recognizers import SpacyRecognizer
@@ -30,7 +31,27 @@ OUTPUT_ENTITIES = [
     "PERSON", "EMAIL_ADDRESS", "PHONE_NUMBER", "EMPLOYEE_ID", "VENDOR_ID", "US_SSN", "PASSPORT", "IN_PAN",
     "PL_PESEL", "TAX_ID", "NATIONAL_ID", "CREDIT_CARD", "IBAN_CODE", "DATE_OF_BIRTH", "ADDRESS", "IN_AADHAAR",
     "IP_ADDRESS", "CREDENTIAL", "BANK_ACCOUNT", "UPI_ID", "DRIVING_LICENCE", "IN_VOTER_ID", "UK_NINO", "HEALTH_DATA",
+    "CONFIDENTIAL_TERM",
 ]
+
+
+@lru_cache(maxsize=8)
+def _terms_pattern(terms: tuple[str, ...]) -> re.Pattern | None:
+    alts = sorted({t.strip() for t in terms if len(t.strip()) >= 3}, key=len, reverse=True)
+    if not alts:
+        return None
+    return re.compile(r"(?<![^\W_])(?:" + "|".join(r"\s+".join(re.escape(w) for w in a.split()) for a in alts) + r")(?![^\W_])",
+                      re.IGNORECASE)
+
+
+def term_findings(span: Span, terms: list[str]) -> list[Finding]:
+    """The organisation's confidential terms (Settings.confidential_terms), wherever they are written."""
+    rx = _terms_pattern(tuple(terms))
+    if rx is None:
+        return []
+    return [Finding(span_id=span.id, file=span.file, start=m.start(), end=m.end(), text=m.group(),
+                    entity_type="CONFIDENTIAL_TERM", score=0.95, recognizer="org:term", layer="L1 rules",
+                    reasons=["listed as a confidential term of the organisation"]) for m in rx.finditer(span.text)]
 
 
 class Detector:
@@ -97,6 +118,7 @@ class Detector:
                                entity_type=r.entity_type, score=round(r.score, 3), recognizer=name, layer=layer,
                                reasons=reasons))
         out.extend(structure_findings(span, self.allow))
+        out.extend(term_findings(span, self.settings.confidential_terms))
         return out
 
     def _recased_ner(self, text: str) -> list:

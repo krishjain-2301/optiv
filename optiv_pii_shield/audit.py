@@ -157,6 +157,7 @@ def settings_record(settings) -> dict:
         rec[f.name] = ("set" if v else "not set") if f.name in ("vault_passphrase", "token_key") else v
     rec["allow_list"] = f"{len(settings.allow_list)} entries, sha256 {hashlib.sha256(canonical(sorted(settings.allow_list))).hexdigest()[:16]}"
     rec["extra_deny_list"] = f"{len(settings.extra_deny_list)} entries"  # names: not written out
+    rec["confidential_terms"] = f"{len(settings.confidential_terms)} entries"  # codenames: not written out
     return rec
 
 

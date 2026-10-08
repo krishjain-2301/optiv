@@ -27,6 +27,7 @@ import os
 import sys
 import zipfile
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
@@ -37,7 +38,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from optiv_pii_shield import Settings
-from optiv_pii_shield.config import PROFILES
+from optiv_pii_shield.config import ORG, PROFILES, GuardPolicy
 from optiv_pii_shield.detect import OUTPUT_ENTITIES
 from optiv_pii_shield.errors import ModelMissing
 from optiv_pii_shield.evaluate import gold_template
@@ -149,6 +150,7 @@ class ScanSettings(BaseModel):
     low_conf_ocr: float = Field(Settings.low_conf_ocr, ge=0.3, le=0.9)
     extra_allow_list: list[str] = Field(default_factory=list, max_length=500)
     deny_list: list[str] = Field(default_factory=list, max_length=500)
+    confidential_terms: list[str] = Field(default_factory=list, max_length=500)  # added to the organisation's own
     vault_passphrase: Optional[str] = Field(None, max_length=256)
     profile: str = "default"
     verify_outputs: bool = True
@@ -168,6 +170,7 @@ class ScanSettings(BaseModel):
         s.low_conf_ocr = self.low_conf_ocr
         s.allow_list = s.allow_list + [x.strip() for x in self.extra_allow_list if x.strip()]
         s.extra_deny_list = [x.strip() for x in self.deny_list if x.strip()]
+        s.confidential_terms = s.confidential_terms + [x.strip() for x in self.confidential_terms if x.strip()]
         s.vault_passphrase = self.vault_passphrase or None
         s.profile, s.verify_outputs = self.profile, self.verify_outputs
         s.blank_textless_images = self.blank_textless_images
@@ -182,7 +185,9 @@ class ScanSettings(BaseModel):
 def default_settings():
     return {**ScanSettings().model_dump(), "default_operator": Settings().operator,
             "profiles": [{"name": k, "label": v["label"], "actions": v["actions"]} for k, v in PROFILES.items()],
-            "entities": OUTPUT_ENTITIES, "max_upload_mb": MAX_UPLOAD // (1024 * 1024)}
+            "entities": OUTPUT_ENTITIES, "max_upload_mb": MAX_UPLOAD // (1024 * 1024),
+            "guard_policy": asdict(GuardPolicy.default()), "markings": ORG["markings"],
+            "org_terms": len(ORG["confidential_terms"])}
 
 
 # ----------------------------------------------------------------------------------- scan
@@ -325,9 +330,25 @@ def post_rehydrate(body: RehydrateRequest):
 
 
 # --------------------------------------------------------------------------- prompt guard
+class GuardPolicyBody(BaseModel):
+    """When the guard refuses a prompt instead of replacing its values (config.GuardPolicy)."""
+
+    source_code: str = Field(GuardPolicy.default().source_code, pattern="^(block|warn|allow)$")
+    markings: str = Field(GuardPolicy.default().markings, pattern="^(block|warn|allow)$")
+    block_categories: list[str] = Field(default_factory=lambda: list(GuardPolicy.default().block_categories), max_length=60)
+    max_bytes: int = Field(GuardPolicy.default().max_bytes, ge=0, le=MAX_PROMPT * 4)
+
+    def to_policy(self) -> GuardPolicy:
+        unknown = set(self.block_categories) - set(OUTPUT_ENTITIES)
+        if unknown:
+            raise ValueError(f"unknown category '{sorted(unknown)[0]}'")
+        return GuardPolicy(self.source_code, self.markings, list(self.block_categories), self.max_bytes)
+
+
 class GuardCheck(BaseModel):
     text: str = Field(min_length=1, max_length=MAX_PROMPT)
     settings: ScanSettings = Field(default_factory=ScanSettings)
+    policy: GuardPolicyBody = Field(default_factory=GuardPolicyBody)
 
 
 @app.get("/api/guard")
@@ -340,11 +361,11 @@ def guard_check(body: GuardCheck):
     if not body.text.strip():
         raise HTTPException(422, "nothing to check")
     try:
-        cfg = body.settings.to_settings()
+        cfg, policy = body.settings.to_settings(), body.policy.to_policy()
     except ValueError as exc:
         raise HTTPException(422, f"settings: {exc}") from exc
     try:
-        return _json(session.check_prompt(body.text, cfg))
+        return _json(session.check_prompt(body.text, cfg, policy))
     except Busy as exc:
         raise HTTPException(409, str(exc)) from exc
     except ModelMissing as exc:

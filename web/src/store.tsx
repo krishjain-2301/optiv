@@ -10,10 +10,13 @@ import {
 export const DEFAULT_SETTINGS: ScanSettings = {
   ocr_engine: "auto", ocr_embedded_images: true, use_gliner: false, propagate_persons: true,
   redact_threshold: 0.6, review_threshold: 0.35, low_conf_ocr: 0.6,
-  extra_allow_list: [], deny_list: [], vault_passphrase: null,
+  extra_allow_list: [], deny_list: [], confidential_terms: [], vault_passphrase: null,
   profile: "default", verify_outputs: true, blank_textless_images: true, detect_faces: true, token_key: null, operator: null,
 };
-const NO_META: Meta = { default_operator: "", profiles: [], entities: [], max_upload_mb: 300 };
+const NO_META: Meta = {
+  default_operator: "", profiles: [], entities: [], max_upload_mb: 300, markings: [], org_terms: 0,
+  guard_policy: { source_code: "block", markings: "block", block_categories: [], max_bytes: 0 },
+};
 /** Secrets are typed in for one session and never written to the browser's storage. */
 const SECRETS = { vault_passphrase: null, token_key: null };
 const STORAGE_KEY = "pii-shield-settings";

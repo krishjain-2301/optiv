@@ -176,10 +176,14 @@ to a name that says it is a secret (`db_password`, `API_KEY`, `clientSecret`). T
 checked (`detect/secrets.py`): `password_file`, `max_tokens`, `os.environ[...]` and `<your-password>` are not
 secrets. A quoted random-looking string with no name to go by lands in the review band.
 
+**Confidential terms.** Project codenames, unreleased product names and internal host names are not personal
+data, and are redacted all the same, as `[TERM_...]`, in files and in prompts. They come from `org.yaml`
+(`confidential_terms`) and from the prompt guard's Policy step.
+
 **Categories.** Person, e-mail, phone, address (street-suffix and Indian PIN-code forms), date of birth,
 employee and vendor IDs, SSN, passport, PAN, Aadhaar, PESEL, UK National Insurance number, voter ID, driving
 licence, tax IDs (TIN, EIN, NIP, GSTIN), card, IBAN, bank account / IFSC, UPI ID, IP address, credentials, and
-stated health data (a special category).
+stated health data (a special category), and confidential terms.
 
 ### 3. Redact
 
@@ -241,17 +245,26 @@ what gets sent. The answer is pasted back and its tokens become values again.
 - **Only issued tokens are restored.** A token this conversation did not issue is left as it is.
 - **Nothing is stored.** No prompt or answer is kept. Tokens and their values live in memory until the
   server stops or the conversation is forgotten; the log holds counts, never text.
-- **Source code is recognised and said so.** `detect/code.py` tells that a prompt is code (and roughly which
-  language) from the shape of its lines, and the page reports where. Credentials and personal data inside the
-  code are replaced, with quotes and syntax left intact. Whether the code itself is confidential is not
-  something a rule can tell: the page says so and leaves the decision to the sender.
+- **Some prompts are refused, not redacted.** Replacing values is not always enough, so a policy decides when
+  the whole prompt is blocked. A blocked prompt yields no text to send, issues no tokens and is counted in the
+  log. The policy is set in `org.yaml` (`guard_policy`) and can be changed in the page's Policy step.
+
+  | Rule | Default | What it looks at |
+  |---|---|---|
+  | Source code | block | `detect/code.py` tells that a prompt is code, and roughly which language, from the shape of its lines. It cannot tell whether the code is confidential, so all of it is refused |
+  | Classification marking | block | "Confidential", "Internal Use Only", "Do Not Distribute" and the like (`detect/markings.py`). A single word counts only where it is used as a marking |
+  | Blocked categories | none | Categories whose presence refuses the prompt instead of being replaced, for example cards or confidential terms |
+  | Size limit | none | A larger prompt is refused unread. A blunt control, there for comparison |
+
+  Source code and markings can be set to *warn* (values are replaced, the sender is told) or *allow*.
 - **It does not send anything.** The safe text is copied by hand into the LLM. Nothing forces a prompt
   through the guard: that would take a browser extension or a network proxy.
 
 ## Configuration
 
-**Organisation vocabulary.** Allow-listed product and team names, always-redact names and internal ID formats
-(such as `EMP-40718` or `MER-IN-0042`) live in `optiv_pii_shield/data/org.yaml`. Point `PII_SHIELD_ORG_CONFIG`
+**Organisation vocabulary.** Allow-listed product and team names, always-redact names, internal ID formats
+(such as `EMP-40718` or `MER-IN-0042`), confidential terms, classification markings and the prompt guard's
+policy live in `optiv_pii_shield/data/org.yaml`. Point `PII_SHIELD_ORG_CONFIG`
 at another file for another client.
 
 **OCR.** RapidOCR (PP-OCR on ONNX Runtime) installs with pip and needs no system binary. Two settings were
@@ -295,7 +308,7 @@ background thread; the page shows its stage, page-by-page progress and elapsed t
 | Category | Mode | Steps |
 |---|---|---|
 | Workspace | New scan | Sources, Detection policy (thresholds, profile, verification, pictures, vault, token key), Run |
-| | Prompt guard | Check a prompt, Restore the answer, Conversation |
+| | Prompt guard | Check a prompt, Restore the answer, Conversation, Policy |
 | Analytics | Overview | Summary, Files, Pipeline |
 | | Exposure & risk | Ranking, Page heatmap, Residual risk |
 | | Findings | Breakdown, Register, In context, Dropped candidates |
@@ -470,7 +483,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 189 tests, a few minutes on CPU
+pytest -q            # 215 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -489,6 +502,8 @@ cd web; npm run typecheck
   are found again, only issued tokens are restored, the log holds no text.
 - **Code and secrets** (`tests/test_code_and_secrets.py`): credentials in code, config and URLs; names and
   placeholders that are not secrets; six kinds of code recognised and five kinds of prose left alone.
+- **Guard policy** (`tests/test_guard_policy.py`): code, markings, blocked categories and the size limit each
+  refuse a prompt; a refused prompt issues no tokens; confidential terms; the policy over HTTP.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
 
@@ -499,14 +514,17 @@ with their digest check, runs the suite on Windows, and builds and type-checks t
 
 ```
 optiv_pii_shield/
-  config.py            thresholds, header→category map, context words, sensitivity weights, redaction profiles
-  data/                org.yaml (allow-list, deny-list, ID formats), given_names.txt (gazetteer)
+  config.py            thresholds, header→category map, context words, sensitivity weights, redaction profiles,
+                       the prompt guard's policy
+  data/                org.yaml (allow-list, deny-list, ID formats, confidential terms, markings, guard policy),
+                       given_names.txt (gazetteer)
   models.py            Span / Word / ImageRef / Visual / Document / Finding
   modelstore.py        model files pinned by SHA-256
   extract/             sniff, pdf, docx, pptx, xlsx, image, plain (text/CSV/e-mail), ooxml walkers, layout
                        (tables/regions), ocr backends, visual (faces, QR codes)
   detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver, secrets
-                       (names and values of credentials), code (is this text source code?)
+                       (names and values of credentials), code (is this text source code?), markings
+                       (classification markings)
   redact/              tokens (vault, keyed tokens, profiles, rehydrate), text (LLM output), files (masked
                        copies), leakcheck (text gate), verify (re-OCR of masked copies)
   review.py            review queue, reviewer decisions and additions

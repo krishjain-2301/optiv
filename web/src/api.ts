@@ -275,6 +275,8 @@ export interface ScanSettings {
   low_conf_ocr: number;
   extra_allow_list: string[];
   deny_list: string[];
+  /** added to the organisation's own (org.yaml) */
+  confidential_terms: string[];
   vault_passphrase: string | null;
   profile: string;
   verify_outputs: boolean;
@@ -296,6 +298,28 @@ export interface Meta {
   profiles: Profile[];
   entities: string[];
   max_upload_mb: number;
+  guard_policy: GuardPolicy;
+  markings: string[];
+  /** confidential terms set in org.yaml */
+  org_terms: number;
+}
+
+export type GuardAction = "block" | "warn" | "allow";
+
+/** When the prompt guard refuses a prompt instead of replacing its values. */
+export interface GuardPolicy {
+  source_code: GuardAction;
+  markings: GuardAction;
+  block_categories: string[];
+  /** 0: no limit */
+  max_bytes: number;
+}
+
+/** One reason a prompt was refused, or one thing the sender is warned about. */
+export interface GuardReason {
+  rule: "source_code" | "marking" | "category" | "size";
+  detail: string;
+  category?: string;
 }
 
 export interface Rehydrated {
@@ -308,7 +332,8 @@ export interface Rehydrated {
 export interface GuardFinding {
   entity_type: string;
   text: string;
-  token: string;
+  /** null when the prompt was refused: no token is issued for it */
+  token: string | null;
   score: number;
   decision: Decision;
   layer: string;
@@ -324,7 +349,9 @@ export interface GuardEvent {
   timestamp: string;
   operator: string;
   id?: number;
-  verdict?: "clean" | "redacted";
+  verdict?: "clean" | "redacted" | "blocked";
+  blocked_by?: string[];
+  warned?: string[];
   chars?: number;
   bytes?: number;
   values?: number;
@@ -351,8 +378,13 @@ export interface GuardCode {
 
 export interface GuardResult {
   id: number;
-  verdict: "clean" | "redacted";
+  verdict: "clean" | "redacted" | "blocked";
+  /** empty when the prompt was refused */
   safe_text: string;
+  blocks: GuardReason[];
+  warnings: GuardReason[];
+  markings: { line: number; text: string; why: string }[];
+  policy: GuardPolicy;
   findings: GuardFinding[];
   code: GuardCode;
   chars: number;
@@ -373,6 +405,7 @@ export interface GuardState {
   checks: number;
   tokens: number;
   people: number;
+  blocked: number;
   restored: number;
   log: GuardEvent[];
 }
@@ -452,7 +485,8 @@ export const api = {
   },
   deleteSession: () => post<{ state: string }>("/api/session", undefined, "DELETE"),
   guard: () => get<GuardState>("/api/guard"),
-  guardCheck: (text: string, settings: ScanSettings) => post<GuardResult>("/api/guard/check", { text, settings }),
+  guardCheck: (text: string, settings: ScanSettings, policy: GuardPolicy) =>
+    post<GuardResult>("/api/guard/check", { text, settings, policy }),
   guardRehydrate: (text: string, operator: string | null) =>
     post<Rehydrated>("/api/guard/rehydrate", { text, operator, purpose: "LLM answer" }),
   guardForget: () => post<GuardState>("/api/guard", undefined, "DELETE"),

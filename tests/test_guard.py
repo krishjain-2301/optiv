@@ -69,7 +69,7 @@ def test_log_holds_counts_and_never_text():
     assert [e["event"] for e in g.state()["log"]] == ["rehydrate", "check"]
     assert not any(v in log for v in VALUES)
     g.reset()
-    assert g.state() == {"checks": 0, "tokens": 0, "people": 0, "restored": 0, "log": []}
+    assert g.state() == {"checks": 0, "tokens": 0, "people": 0, "blocked": 0, "restored": 0, "log": []}
     assert g.rehydrate("[PERSON_001]")["restored"] == []
 
 
@@ -127,4 +127,4 @@ def test_deleting_the_session_forgets_the_conversation(client):
     client.post("/api/guard/check", json={"text": PROMPT})
     assert client.get("/api/guard").json()["tokens"] > 0
     assert client.delete("/api/session").json() == {"state": "idle"}
-    assert client.get("/api/guard").json() == {"checks": 0, "tokens": 0, "people": 0, "restored": 0, "log": []}
+    assert client.get("/api/guard").json() == {"checks": 0, "tokens": 0, "people": 0, "blocked": 0, "restored": 0, "log": []}

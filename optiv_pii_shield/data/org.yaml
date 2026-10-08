@@ -99,6 +99,40 @@ allow_list:
 # Names to always redact (and propagate), even where no detector fires.
 deny_list: []
 
+# Confidential terms: project codenames, unreleased product names, internal host names. They are
+# not personal data; they are redacted like it, as [TERM_...], in files and in prompts.
+confidential_terms: []
+
+# Classification markings. A prompt that carries one is refused by the prompt guard (see
+# guard_policy). Phrases of several words count wherever they are written; a single word counts
+# only as a marking: after "Classification:", in brackets, or on a short line of its own.
+markings:
+  - Strictly Confidential
+  - Highly Confidential
+  - Company Confidential
+  - Privileged and Confidential
+  - Confidential
+  - Internal Use Only
+  - For Internal Use
+  - Internal Only
+  - Do Not Distribute
+  - Not for Distribution
+  - Do Not Share
+  - Trade Secret
+  - Top Secret
+  - Proprietary
+  - Restricted
+
+# What the prompt guard does with a prompt beyond replacing values.
+#   source_code, markings: block | warn | allow
+#   block_categories: categories whose presence refuses the prompt instead of being replaced
+#   max_bytes: a larger prompt is refused unread (0: no limit)
+guard_policy:
+  source_code: block
+  markings: block
+  block_categories: []
+  max_bytes: 0
+
 # Internal identifier formats. Each becomes an L1 rule: name, entity (category), pattern, score.
 # OCR glues neighbours on ("EMP-41877sV", "EMP-41077IAM"), so there is no trailing \b; O/I/l read
 # for 0/1 are tolerated inside the number, but an ID must end on a real digit unless nothing

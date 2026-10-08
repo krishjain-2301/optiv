@@ -14,7 +14,7 @@ export const GROUPS: Record<string, string[]> = {
   "Government & financial ID": ["US_SSN", "PASSPORT", "IN_PAN", "PL_PESEL", "TAX_ID", "NATIONAL_ID", "IN_AADHAAR",
     "CREDIT_CARD", "IBAN_CODE", "BANK_ACCOUNT", "UPI_ID", "DRIVING_LICENCE", "IN_VOTER_ID", "UK_NINO"],
   "Internal ID": ["EMPLOYEE_ID", "VENDOR_ID"],
-  "Secrets & network": ["CREDENTIAL", "IP_ADDRESS"],
+  "Secrets & network": ["CREDENTIAL", "IP_ADDRESS", "CONFIDENTIAL_TERM"],
 };
 export const OTHER = "Other / unreadable";
 export const GROUP_ORDER = [...Object.keys(GROUPS), OTHER];
@@ -34,7 +34,8 @@ const LABEL: Record<string, string> = {
   IN_AADHAAR: "Aadhaar (India)", TAX_ID: "Tax ID", NATIONAL_ID: "National ID", EMPLOYEE_ID: "Employee ID",
   VENDOR_ID: "Vendor ID", IBAN_CODE: "IBAN", IP_ADDRESS: "IP address", LOW_CONFIDENCE_OCR: "Unreadable OCR text",
   BANK_ACCOUNT: "Bank account", UPI_ID: "UPI ID (India)", DRIVING_LICENCE: "Driving licence", IN_VOTER_ID: "Voter ID (India)",
-  UK_NINO: "National Insurance no. (UK)", HEALTH_DATA: "Health data",
+  UK_NINO: "National Insurance no. (UK)", HEALTH_DATA: "Health data", CONFIDENTIAL_TERM: "Confidential term",
+  CREDENTIAL: "Credential",
 };
 
 /** US_SSN -> US SSN, DATE_OF_BIRTH -> Date of birth */

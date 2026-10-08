@@ -64,6 +64,34 @@ class Settings:
     # --- vocabularies -------------------------------------------------------------
     allow_list: list[str] = field(default_factory=lambda: list(DEFAULT_ALLOW_LIST))
     extra_deny_list: list[str] = field(default_factory=lambda: list(ORG["deny_list"]))  # names to always redact
+    # Project codenames, product names, internal hosts: not personal data, redacted all the same.
+    confidential_terms: list[str] = field(default_factory=lambda: list(ORG["confidential_terms"]))
+
+
+ACTIONS = ("block", "warn", "allow")
+
+
+@dataclass
+class GuardPolicy:
+    """What the prompt guard does with a prompt beyond replacing values (guard.py). Personal data
+    and credentials are always replaced; this decides when the whole prompt is refused instead."""
+
+    source_code: str = "block"  # block | warn | allow: a prompt that is source code
+    markings: str = "block"  # block | warn | allow: a prompt carrying a classification marking
+    block_categories: list[str] = field(default_factory=list)  # a value of these categories refuses the prompt
+    max_bytes: int = 0  # a larger prompt is refused unread; 0: no limit
+
+    def __post_init__(self):
+        for name in ("source_code", "markings"):
+            if getattr(self, name) not in ACTIONS:
+                raise ValueError(f"guard policy: {name} must be one of {', '.join(ACTIONS)}")
+        if self.max_bytes < 0:
+            raise ValueError("guard policy: max_bytes cannot be negative")
+
+    @classmethod
+    def default(cls) -> "GuardPolicy":
+        """The organisation's policy (org.yaml: guard_policy), over the defaults above."""
+        return cls(**ORG["guard_policy"])
 
 
 def _os_user() -> str:
@@ -74,7 +102,8 @@ def _os_user() -> str:
 
 
 def load_org_config(path: str | Path | None = None) -> dict:
-    """Organisation-specific vocabulary (allow-list, deny-list, internal ID formats) from YAML:
+    """Organisation-specific vocabulary (allow-list, deny-list, internal ID formats, confidential
+    terms, classification markings) and its prompt-guard policy, from YAML:
     ``path``, else $PII_SHIELD_ORG_CONFIG, else the bundled optiv_pii_shield/data/org.yaml."""
     p = Path(path or os.environ.get("PII_SHIELD_ORG_CONFIG") or Path(__file__).parent / "data" / "org.yaml")
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
@@ -85,6 +114,12 @@ def load_org_config(path: str | Path | None = None) -> dict:
     data.setdefault("allow_list", [])
     data.setdefault("deny_list", [])
     data.setdefault("id_patterns", [])
+    for key in ("confidential_terms", "markings"):
+        data[key] = [str(x) for x in data.get(key) or []]
+    data["guard_policy"] = dict(data.get("guard_policy") or {})
+    unknown = set(data["guard_policy"]) - {"source_code", "markings", "block_categories", "max_bytes"}
+    if unknown:
+        raise ValueError(f"{p}: guard_policy has unknown keys {sorted(unknown)}")
     data["path"] = str(p)
     return data
 
@@ -157,7 +192,7 @@ SENSITIVITY: dict[str, float] = {
     "CREDIT_CARD": 9, "IBAN_CODE": 8, "IN_PAN": 8, "TAX_ID": 7, "DATE_OF_BIRTH": 6, "ADDRESS": 5,
     "PHONE_NUMBER": 4, "EMAIL_ADDRESS": 4, "PERSON": 3, "IP_ADDRESS": 3, "EMPLOYEE_ID": 3, "VENDOR_ID": 1,
     "BANK_ACCOUNT": 8, "UPI_ID": 5, "DRIVING_LICENCE": 9, "IN_VOTER_ID": 9, "UK_NINO": 10, "HEALTH_DATA": 9,
-    "LOW_CONFIDENCE_OCR": 2, "_default": 3,
+    "CONFIDENTIAL_TERM": 7, "LOW_CONFIDENCE_OCR": 2, "_default": 3,
 }
 # Special categories (GDPR Art. 9, "sensitive personal data"): flagged in reports.
 SPECIAL_CATEGORIES = {"HEALTH_DATA"}

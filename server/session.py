@@ -245,13 +245,13 @@ class Session:
         self.empty()
 
     # ---------------------------------------------------------------------- prompt guard
-    def check_prompt(self, text: str, settings: Settings) -> dict:
+    def check_prompt(self, text: str, settings: Settings, policy=None) -> dict:
         """A prompt with its values replaced by tokens (optiv_pii_shield/guard.py). Refused while a
         scan is using the detector."""
         busy = "a scan is running; the prompt guard is free again when it has finished"
         if self.job is not None and self.job.kind == "scan" and self.job.state in ACTIVE:
             raise Busy(busy)
         try:
-            return self.guard.check(text, settings, wait=10)
+            return self.guard.check(text, settings, policy, wait=10)
         except GuardBusy as exc:
             raise Busy(busy) from exc
