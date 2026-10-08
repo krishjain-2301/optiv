@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from optiv_pii_shield import RunResult, Settings, audit, run, workspace
+from optiv_pii_shield import RunResult, Settings, audit, replay, run, workspace
 from optiv_pii_shield.errors import ModelMissing, RunCancelled
 from optiv_pii_shield.guard import Guard, GuardBusy
 from optiv_pii_shield.pipeline import REVIEW_STAGES, STAGES, _unique, apply_review, stage_of
@@ -255,3 +255,14 @@ class Session:
             return self.guard.check(text, settings, policy, wait=10)
         except GuardBusy as exc:
             raise Busy(busy) from exc
+
+    def replay(self, cap: int) -> dict:
+        """The Samsung scenarios under a size cap and under the guard (optiv_pii_shield/replay.py).
+        They run in conversations of their own: this session's tokens and log are not touched."""
+        busy = "a scan is running; the replay is free again when it has finished"
+        if (self.job is not None and self.job.kind == "scan" and self.job.state in ACTIVE) or not self.guard.lock.acquire(timeout=10):
+            raise Busy(busy)
+        try:
+            return replay.run(cap)
+        finally:
+            self.guard.lock.release()

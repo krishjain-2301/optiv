@@ -86,7 +86,8 @@ RULES: list[Rule] = [
          r"|-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]+?-----END [A-Z ]*PRIVATE KEY-----", 0.9),
     Rule("secret_assigned", "CREDENTIAL",
          r"(?i:\b(?:api[_ -]?key|secret(?:[_ -]?key)?|access[_ -]?token|auth[_ -]?token|bearer|password|passwd|pwd|client[_ -]?secret)"
-         r"[\"']?\s*(?:[:=]|is)\s*[\"']?)([^\s\"',;]{8,})", 0.75, sec.check_secret_value, group=1),
+         # the value stops before a full stop that ends the sentence ("the password is Hunter2!Hunter2.")
+         r"[\"']?\s*(?:[:=]|is)\s*[\"']?)([^\s\"',;]{8,}?)(?=\.?(?:[\s\"',;]|$))", 0.75, sec.check_secret_value, group=1),
     Rule("secret_known_more", "CREDENTIAL",
          r"\bglpat-[A-Za-z0-9_-]{20,}|\bnpm_[A-Za-z0-9]{36}\b|\bpypi-[A-Za-z0-9_-]{50,}|\bSG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}"
          r"|\bhf_[A-Za-z0-9]{30,}\b|\bshp(?:at|ca|pa|ss)_[A-Fa-f0-9]{32}\b|\bdop_v1_[a-f0-9]{64}\b|\bya29\.[A-Za-z0-9_-]{20,}"

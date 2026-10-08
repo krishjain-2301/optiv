@@ -11,6 +11,7 @@
     /api/guard           GET the prompt guard's conversation · DELETE forget it
     /api/guard/check     POST a prompt: its values replaced by tokens, and what was found
     /api/guard/rehydrate POST an answer holding those tokens: original values put back
+    /api/guard/replay    GET the Samsung scenarios under a size cap and under the guard
     /api/session         DELETE this session's files
 
 Everything else is the built dashboard (web/dist) with index.html as the fallback for its routes.
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -42,6 +43,7 @@ from optiv_pii_shield.config import ORG, PROFILES, GuardPolicy
 from optiv_pii_shield.detect import OUTPUT_ENTITIES
 from optiv_pii_shield.errors import ModelMissing
 from optiv_pii_shield.evaluate import gold_template
+from optiv_pii_shield.replay import SAMSUNG_CAP
 from optiv_pii_shield.review import Addition, Decision
 
 from . import payloads
@@ -375,6 +377,16 @@ def guard_check(body: GuardCheck):
 @app.post("/api/guard/rehydrate")
 def guard_rehydrate(body: RehydrateRequest):
     return _json(session.guard.rehydrate(body.text, (body.operator or "").strip() or None, body.purpose.strip()))
+
+
+@app.get("/api/guard/replay")
+def guard_replay(cap: int = Query(SAMSUNG_CAP, ge=1, le=MAX_PROMPT * 4)):
+    try:
+        return _json(session.replay(cap))
+    except Busy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ModelMissing as exc:
+        raise HTTPException(503, str(exc)) from exc
 
 
 @app.delete("/api/guard")

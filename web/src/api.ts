@@ -401,6 +401,46 @@ export interface GuardResult {
   elapsed: number;
 }
 
+/** One scenario of the Samsung replay under the two controls. `right`: did the control do the right thing? */
+export interface ReplayScenario {
+  id: string;
+  title: string;
+  samsung: string;
+  holds: string;
+  sensitive: boolean;
+  prompt: string;
+  bytes: number;
+  cap: { verdict: "allowed" | "blocked"; right: boolean; outcome: string };
+  guard: {
+    verdict: "clean" | "redacted" | "blocked";
+    right: boolean;
+    outcome: string;
+    blocks: GuardReason[];
+    warnings: GuardReason[];
+    values: number;
+    by_category: Record<string, number>;
+    code_lines: number;
+    languages: string[];
+    safe_text: string;
+  };
+}
+
+export interface Replay {
+  cap_bytes: number;
+  policy: { source_code: GuardAction; markings: GuardAction };
+  terms: string[];
+  scenarios: ReplayScenario[];
+  summary: {
+    scenarios: number;
+    cap_right: number;
+    guard_right: number;
+    cap_leaks: number;
+    guard_leaks: number;
+    cap_refused_harmless: number;
+    guard_refused_harmless: number;
+  };
+}
+
 export interface GuardState {
   checks: number;
   tokens: number;
@@ -489,5 +529,6 @@ export const api = {
     post<GuardResult>("/api/guard/check", { text, settings, policy }),
   guardRehydrate: (text: string, operator: string | null) =>
     post<Rehydrated>("/api/guard/rehydrate", { text, operator, purpose: "LLM answer" }),
+  guardReplay: (cap: number) => get<Replay>(`/api/guard/replay?cap=${cap}`),
   guardForget: () => post<GuardState>("/api/guard", undefined, "DELETE"),
 };

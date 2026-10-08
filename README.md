@@ -260,6 +260,23 @@ what gets sent. The answer is pasted back and its tokens become values again.
 - **It does not send anything.** The safe text is copied by hand into the LLM. Nothing forces a prompt
   through the guard: that would take a browser extension or a network proxy.
 
+**The Samsung replay.** In March 2023 three Samsung engineers pasted source code and the contents of a meeting
+into a public chatbot; the company's first control was a cap of 1,024 bytes per prompt. The page's last step
+(`optiv_pii_shield/replay.py`) puts prompts of the same kinds, all invented, through that cap and through the
+guard, with two more that show a size cap failing in both directions.
+
+| Scenario | Bytes | 1,024-byte cap | Prompt guard |
+|---|---|---|---|
+| Incident 1: debug the measurement database loader | 1,524 | refused unread | refused: source code |
+| Incident 2: optimise the yield and faulty-equipment code | 459 | **sent as written** | refused: source code |
+| Incident 3: turn meeting notes into minutes | 546 | **sent as written** | sent with 10 values replaced |
+| A short question with a password in it | 166 | **sent as written** | sent with 2 values replaced |
+| A long prompt with nothing sensitive in it | 1,266 | **refused** | sent unchanged |
+
+The cap makes the right call once in five, the guard five times in five. In the third scenario the guard
+removes who was in the meeting and the project codename; what was discussed still goes out, because no rule
+can tell that a yield figure is a trade secret. The page says so.
+
 ## Configuration
 
 **Organisation vocabulary.** Allow-listed product and team names, always-redact names, internal ID formats
@@ -308,7 +325,7 @@ background thread; the page shows its stage, page-by-page progress and elapsed t
 | Category | Mode | Steps |
 |---|---|---|
 | Workspace | New scan | Sources, Detection policy (thresholds, profile, verification, pictures, vault, token key), Run |
-| | Prompt guard | Check a prompt, Restore the answer, Conversation, Policy |
+| | Prompt guard | Check a prompt, Restore the answer, Conversation, Policy, Samsung replay |
 | Analytics | Overview | Summary, Files, Pipeline |
 | | Exposure & risk | Ranking, Page heatmap, Residual risk |
 | | Findings | Breakdown, Register, In context, Dropped candidates |
@@ -483,7 +500,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 215 tests, a few minutes on CPU
+pytest -q            # 221 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -504,6 +521,7 @@ cd web; npm run typecheck
   placeholders that are not secrets; six kinds of code recognised and five kinds of prose left alone.
 - **Guard policy** (`tests/test_guard_policy.py`): code, markings, blocked categories and the size limit each
   refuse a prompt; a refused prompt issues no tokens; confidential terms; the policy over HTTP.
+- **Replay** (`tests/test_replay.py`): the outcome of each Samsung scenario under the cap and under the guard.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
 
@@ -529,6 +547,7 @@ optiv_pii_shield/
                        copies), leakcheck (text gate), verify (re-OCR of masked copies)
   review.py            review queue, reviewer decisions and additions
   guard.py             prompt guard: a prompt's values replaced by tokens, and the answer's put back
+  replay.py            the Samsung incidents of 2023 under a size cap and under the guard
   audit.py             hash-chained audit log, run manifest, signing, verify-run
   exposure.py          exposure score and residual risk
   workspace.py         per-session working folders and their removal

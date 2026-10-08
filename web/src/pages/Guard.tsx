@@ -1,14 +1,14 @@
-// Workspace · Prompt guard: check a prompt -> restore the answer -> conversation -> policy.
+// Workspace · Prompt guard: check a prompt -> restore the answer -> conversation -> policy -> Samsung replay.
 // Text typed or pasted for an LLM goes through the same detection as a file and comes back with
 // its values replaced, or is refused by the policy; the answer gets its values back from the
 // tokens this conversation issued.
-import { Ban, Check, Copy, KeyRound, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
+import { Ban, Check, Copy, KeyRound, Play, RotateCcw, ShieldCheck, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { api, type GuardAction, type GuardPolicy, type GuardResult, type GuardState, type Rehydrated } from "../api";
+import { api, type GuardAction, type GuardPolicy, type GuardResult, type GuardState, type Rehydrated, type Replay } from "../api";
 import { Meter } from "../components/charts";
 import { MultiSelect, Select } from "../components/controls";
 import { DataTable } from "../components/table";
-import { Card, Kpis, Muted, Notice, PageHeader, Row, Steps, useStep } from "../components/ui";
+import { Card, Chip, Kpis, Muted, Notice, PageHeader, Row, Steps, useStep } from "../components/ui";
 import { DECISION_LABEL, pretty } from "../lib/entities";
 import { int } from "../lib/format";
 import { useStore } from "../store";
@@ -250,9 +250,97 @@ function Policy({ policy, setPolicy, reset }: { policy: GuardPolicy; setPolicy: 
   );
 }
 
+const CAP_LABEL = { allowed: "Sent as written", blocked: "Refused unread" };
+const GUARD_LABEL = { clean: "Sent unchanged", redacted: "Sent with values replaced", blocked: "Refused" };
+
+/** Samsung, March 2023: the three incidents and two contrast cases, under a size cap and under the guard. */
+function SamsungReplay({ tryPrompt }: { tryPrompt: (text: string) => void }) {
+  const [cap, setCap] = useState(1024);
+  const [replay, setReplay] = useState<Replay | null>(null);
+  const [open, setOpen] = useState("incident-1");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const run = async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      setReplay(await api.guardReplay(cap));
+    } catch (e) {
+      setReplay(null);
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const s = replay?.summary;
+  const shown = replay?.scenarios.find((x) => x.id === open) ?? replay?.scenarios[0];
+  return (
+    <>
+      <Card title="Samsung, March 2023" sub="Three engineers pasted source code and the contents of a meeting into a public chatbot within twenty days">
+        <p className="muted">Samsung's first control was a cap of 1,024 bytes per prompt. The same kinds of prompt, all invented here, are put through that cap and through the prompt guard. Two more show that a size cap fails in both directions.</p>
+        <div className="inline">
+          <label className="field" style={{ width: "11rem" }}>
+            <span className="field-label">Size cap in bytes</span>
+            <input className="input" type="number" min={1} step={256} value={cap} onChange={(e) => setCap(Math.max(1, Math.round(Number(e.target.value) || 1)))} />
+          </label>
+          <button className="btn primary" onClick={run} disabled={busy}><Play size={16} /> {busy ? "Running…" : "Run the replay"}</button>
+        </div>
+        {error && <Notice kind="error">{error}</Notice>}
+      </Card>
+      {replay && s && (
+        <>
+          <Kpis tiles={[
+            { label: "Size cap: right calls", value: `${s.cap_right} of ${s.scenarios}`, status: s.cap_right === s.scenarios ? "good" : "critical", sub: `at ${int(replay.cap_bytes)} bytes` },
+            { label: "Prompt guard: right calls", value: `${s.guard_right} of ${s.scenarios}`, status: s.guard_right === s.scenarios ? "good" : "critical", sub: "the organisation's default policy" },
+            { label: "Sensitive prompts sent whole", value: `${s.cap_leaks} vs ${s.guard_leaks}`, status: s.cap_leaks ? "critical" : "good", sub: "under the cap vs under the guard" },
+            { label: "Harmless prompts refused", value: `${s.cap_refused_harmless} vs ${s.guard_refused_harmless}`, status: s.cap_refused_harmless ? "warning" : "good", sub: "under the cap vs under the guard" },
+          ]} />
+          <Card title="Scenario by scenario" sub="A sensitive prompt is handled rightly if it is stopped or stripped; a harmless one, if it goes through whole">
+            <DataTable rows={replay.scenarios} cols={[
+              { key: "title", label: "Scenario", value: (x) => x.title, wrap: true, width: "17rem" },
+              { key: "holds", label: "What the prompt holds", value: (x) => x.holds, wrap: true, width: "17rem" },
+              { key: "bytes", label: "Bytes", value: (x) => x.bytes, align: "right" },
+              { key: "cap", label: "Size cap", value: (x) => x.cap.verdict, render: (x) => <Chip label={CAP_LABEL[x.cap.verdict]} status={x.cap.right ? "good" : "critical"} /> },
+              { key: "guard", label: "Prompt guard", value: (x) => x.guard.verdict, render: (x) => <Chip label={GUARD_LABEL[x.guard.verdict]} status={x.guard.right ? "good" : "critical"} /> },
+              { key: "why", label: "What the guard did", value: (x) => x.guard.outcome, wrap: true, width: "20rem" },
+              { key: "open", label: "", value: () => null, align: "right", render: (x) => (
+                <button className={x.id === shown?.id ? "btn small on" : "btn small"} onClick={() => setOpen(x.id)}>View</button>
+              ) },
+            ]} />
+            <Muted>Green: the control did the right thing. Red: it sent a sensitive prompt whole, or refused a harmless one.</Muted>
+          </Card>
+          {shown && (
+            <>
+              <Row>
+                <Card title={shown.title} sub={shown.samsung}>
+                  <pre className="text-pane">{shown.prompt}</pre>
+                  <div className="inline">
+                    <button className="btn" onClick={() => tryPrompt(shown.prompt)}><ShieldCheck size={16} /> Try it under “Check a prompt”</button>
+                    <span className="muted">{int(shown.bytes)} bytes · invented for this replay</span>
+                  </div>
+                </Card>
+                <Card title="What would have left the company" sub="Under each control">
+                  <p className="field-label">Size cap of {int(replay.cap_bytes)} bytes</p>
+                  <Notice kind={shown.cap.right ? "success" : "error"}>{shown.cap.outcome}.</Notice>
+                  <p className="field-label">Prompt guard</p>
+                  <Notice kind={shown.guard.right ? "success" : "error"}>{shown.guard.outcome}.</Notice>
+                  {shown.guard.verdict !== "blocked" && <pre className="text-pane"><Tokens text={shown.guard.safe_text} /></pre>}
+                </Card>
+              </Row>
+              {shown.id === "incident-3" && (
+                <Notice kind="info">The guard replaces who was in the meeting and the codename ({replay.terms.join(", ")} are listed as confidential terms for this replay). What was discussed, such as the yield figures, still goes out: no rule can tell that a number is a trade secret. A classification marking on the notes, or a stricter policy, would refuse the prompt.</Notice>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
 export default function Guard() {
   const { meta } = useStore();
-  const [step, setStep] = useStep(4);
+  const [step, setStep] = useStep(5);
   const [text, setText] = useState("");
   const [result, setResult] = useState<GuardResult | null>(null);
   const [state, setState] = useState<GuardState | null>(null);
@@ -278,11 +366,12 @@ export default function Guard() {
   return (
     <>
       <PageHeader section="Workspace" title="Prompt guard" subtitle="Check what you are about to send to an LLM, send the safe text instead, and get the values back in the answer." />
-      <Steps steps={["Check a prompt", "Restore the answer", "Conversation", "Policy"]} active={step} onChange={setStep} />
+      <Steps steps={["Check a prompt", "Restore the answer", "Conversation", "Policy", "Samsung replay"]} active={step} onChange={setStep} />
       {step === 0 && <CheckPrompt text={text} setText={setText} result={result} setResult={setResult} policy={policy} refresh={refresh} />}
       {step === 1 && <Restore state={state} refresh={refresh} />}
       {step === 2 && <Conversation state={state} forget={forget} />}
       {step === 3 && <Policy policy={policy} setPolicy={setPolicy} reset={resetPolicy} />}
+      {step === 4 && <SamsungReplay tryPrompt={(t) => { setText(t); setResult(null); setStep(0); }} />}
     </>
   );
 }
