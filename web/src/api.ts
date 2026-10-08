@@ -304,6 +304,67 @@ export interface Rehydrated {
   unknown: string[];
 }
 
+/** One value the prompt guard replaced; start/end are offsets into the prompt as it was typed. */
+export interface GuardFinding {
+  entity_type: string;
+  text: string;
+  token: string;
+  score: number;
+  decision: Decision;
+  layer: string;
+  reasons: string[];
+  start: number;
+  end: number;
+  line: number;
+}
+
+/** A log entry of the guard's conversation: counts only, never text. */
+export interface GuardEvent {
+  event: "check" | "rehydrate";
+  timestamp: string;
+  operator: string;
+  id?: number;
+  verdict?: "clean" | "redacted";
+  chars?: number;
+  bytes?: number;
+  values?: number;
+  findings?: number;
+  review?: number;
+  profile?: string;
+  by_category?: Record<string, number>;
+  tokens?: string[];
+  count?: number;
+  unknown?: number;
+  purpose?: string;
+}
+
+export interface GuardResult {
+  id: number;
+  verdict: "clean" | "redacted";
+  safe_text: string;
+  findings: GuardFinding[];
+  chars: number;
+  bytes: number;
+  values: number;
+  review: number;
+  dropped: number;
+  scrubbed: number;
+  /** the profile or token key changed, so earlier tokens were forgotten */
+  restarted: boolean;
+  profile: string;
+  by_category: Record<string, number>;
+  components: string[];
+  elapsed: number;
+}
+
+export interface GuardState {
+  checks: number;
+  tokens: number;
+  people: number;
+  restored: number;
+  log: GuardEvent[];
+}
+
 export const IDLE: ScanStatus = {
   state: "idle", fraction: 0, message: "", error: null, pause_requested: false, cancel_requested: false,
   stage: 0, stages: [], elapsed: 0, files: [], kind: "scan",
@@ -378,4 +439,9 @@ export const api = {
     return post<Evaluation>("/api/run/transcription", form);
   },
   deleteSession: () => post<{ state: string }>("/api/session", undefined, "DELETE"),
+  guard: () => get<GuardState>("/api/guard"),
+  guardCheck: (text: string, settings: ScanSettings) => post<GuardResult>("/api/guard/check", { text, settings }),
+  guardRehydrate: (text: string, operator: string | null) =>
+    post<Rehydrated>("/api/guard/rehydrate", { text, operator, purpose: "LLM answer" }),
+  guardForget: () => post<GuardState>("/api/guard", undefined, "DELETE"),
 };

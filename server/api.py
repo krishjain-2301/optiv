@@ -8,6 +8,9 @@
     /api/run/evaluation  GET scores vs gold labels      /api/run/gold   POST labels · GET a draft
     /api/run/transcription  POST a hand transcription of one file, for structure retention
     /api/run/output      GET one output file            /api/run/outputs.zip  GET the shareable set
+    /api/guard           GET the prompt guard's conversation · DELETE forget it
+    /api/guard/check     POST a prompt: its values replaced by tokens, and what was found
+    /api/guard/rehydrate POST an answer holding those tokens: original values put back
     /api/session         DELETE this session's files
 
 Everything else is the built dashboard (web/dist) with index.html as the fallback for its routes.
@@ -36,6 +39,7 @@ from pydantic import BaseModel, Field
 from optiv_pii_shield import Settings
 from optiv_pii_shield.config import PROFILES
 from optiv_pii_shield.detect import OUTPUT_ENTITIES
+from optiv_pii_shield.errors import ModelMissing
 from optiv_pii_shield.evaluate import gold_template
 from optiv_pii_shield.review import Addition, Decision
 
@@ -50,6 +54,7 @@ UPLOAD_TYPES = {".pdf", ".docx", ".pptx", ".xlsx", ".png", ".jpg", ".jpeg", ".ti
                 ".txt", ".csv", ".tsv", ".eml"}
 MAX_UPLOAD = int(os.environ.get("PII_SHIELD_MAX_UPLOAD_MB", "300")) * 1024 * 1024  # all files of one scan together
 MAX_TEXT = 2 * 1024 * 1024  # gold labels, transcriptions, text to rehydrate
+MAX_PROMPT = 100_000  # characters of one prompt given to the guard
 LOOPBACK = {"127.0.0.1", "localhost", "[::1]"}
 session = Session()
 
@@ -317,6 +322,44 @@ def post_rehydrate(body: RehydrateRequest):
     if session.job is not None and session.job.state in ACTIVE:
         raise HTTPException(409, "the outputs are being rewritten; try again when that has finished")
     return _json(session.rehydrate(body.text, (body.operator or "").strip() or None, body.purpose.strip()))
+
+
+# --------------------------------------------------------------------------- prompt guard
+class GuardCheck(BaseModel):
+    text: str = Field(min_length=1, max_length=MAX_PROMPT)
+    settings: ScanSettings = Field(default_factory=ScanSettings)
+
+
+@app.get("/api/guard")
+def guard_state():
+    return _json(session.guard.state())
+
+
+@app.post("/api/guard/check")
+def guard_check(body: GuardCheck):
+    if not body.text.strip():
+        raise HTTPException(422, "nothing to check")
+    try:
+        cfg = body.settings.to_settings()
+    except ValueError as exc:
+        raise HTTPException(422, f"settings: {exc}") from exc
+    try:
+        return _json(session.check_prompt(body.text, cfg))
+    except Busy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ModelMissing as exc:
+        raise HTTPException(503, str(exc)) from exc
+
+
+@app.post("/api/guard/rehydrate")
+def guard_rehydrate(body: RehydrateRequest):
+    return _json(session.guard.rehydrate(body.text, (body.operator or "").strip() or None, body.purpose.strip()))
+
+
+@app.delete("/api/guard")
+def guard_forget():
+    session.guard.reset()
+    return _json(session.guard.state())
 
 
 # ----------------------------------------------------------------------------- evaluation

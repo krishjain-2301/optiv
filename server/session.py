@@ -15,6 +15,7 @@ from pathlib import Path
 
 from optiv_pii_shield import RunResult, Settings, audit, run, workspace
 from optiv_pii_shield.errors import ModelMissing, RunCancelled
+from optiv_pii_shield.guard import Guard, GuardBusy
 from optiv_pii_shield.pipeline import REVIEW_STAGES, STAGES, _unique, apply_review, stage_of
 from optiv_pii_shield.redact.tokens import rehydrate
 from optiv_pii_shield.review import Addition, Decision
@@ -92,6 +93,7 @@ class Session:
         self.gold: Path | None = None
         self.transcriptions: dict[str, str] = {}  # file -> hand transcription, for structure retention
         self.cache: dict = {}  # payloads derived from the result, dropped with it
+        self.guard = Guard()  # the prompt guard's conversation: in memory only, independent of the run
 
     # ------------------------------------------------------------------------- lifecycle
     def open(self) -> None:
@@ -101,6 +103,7 @@ class Session:
     def close(self) -> None:
         if self.job is not None and self.job.state in ACTIVE:
             self.job.cancel()
+        self.guard.reset()
         if self.work is not None:
             self._release()
             try:
@@ -166,7 +169,8 @@ class Session:
             paths, gold_path = self._prepare(uploads, gold)
             job.files = [p.name for p in paths]
             job.progress("Preparing files", 0.0)
-            res = run(paths, settings, self.out, progress=job.progress)
+            with self.guard.lock:  # the detector is shared with the prompt guard
+                res = run(paths, settings, self.out, progress=job.progress)
             with self.lock:
                 self.result, self.settings, self.gold = res, settings, gold_path
                 self.cache.clear()
@@ -237,4 +241,17 @@ class Session:
             if self.job is not None and self.job.state in ACTIVE:
                 raise Busy("a scan is running; cancel it first")
             self.job = None
+        self.guard.reset()
         self.empty()
+
+    # ---------------------------------------------------------------------- prompt guard
+    def check_prompt(self, text: str, settings: Settings) -> dict:
+        """A prompt with its values replaced by tokens (optiv_pii_shield/guard.py). Refused while a
+        scan is using the detector."""
+        busy = "a scan is running; the prompt guard is free again when it has finished"
+        if self.job is not None and self.job.kind == "scan" and self.job.state in ACTIVE:
+            raise Busy(busy)
+        try:
+            return self.guard.check(text, settings, wait=10)
+        except GuardBusy as exc:
+            raise Busy(busy) from exc

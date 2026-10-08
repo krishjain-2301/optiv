@@ -1,5 +1,5 @@
 // Layout: the sidebar lists the modes by category; each page lays its own steps out left to right.
-import { BadgeCheck, Download, FileText, Flame, EyeOff, LayoutDashboard, ShieldCheck, FileUp, UserCheck } from "lucide-react";
+import { BadgeCheck, Download, FileText, Flame, EyeOff, LayoutDashboard, MessageSquareLock, ShieldCheck, FileUp, UserCheck } from "lucide-react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { TooltipLayer } from "./components/tooltip";
 import { clock, int, percent } from "./lib/format";
@@ -7,6 +7,7 @@ import Evaluation from "./pages/Evaluation";
 import Exposure from "./pages/Exposure";
 import Extraction from "./pages/Extraction";
 import Findings from "./pages/Findings";
+import Guard from "./pages/Guard";
 import Overview from "./pages/Overview";
 import Redaction from "./pages/Redaction";
 import Reports from "./pages/Reports";
@@ -15,7 +16,10 @@ import Scan from "./pages/Scan";
 import { isActive, useStore } from "./store";
 
 const NAV = [
-  { section: "Workspace", items: [{ to: "/", label: "New scan", icon: FileUp }] },
+  { section: "Workspace", items: [
+    { to: "/", label: "New scan", icon: FileUp },
+    { to: "/guard", label: "Prompt guard", icon: MessageSquareLock },
+  ] },
   { section: "Analytics", items: [
     { to: "/overview", label: "Overview", icon: LayoutDashboard },
     { to: "/exposure", label: "Exposure & risk", icon: Flame },
@@ -83,6 +87,7 @@ export default function App() {
       <main className="main">
         <Routes>
           <Route path="/" element={<Scan />} />
+          <Route path="/guard" element={<Guard />} />
           <Route path="/overview" element={<Overview />} />
           <Route path="/exposure" element={<Exposure />} />
           <Route path="/findings" element={<Findings />} />

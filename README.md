@@ -52,6 +52,8 @@ That rules out the obvious shortcut. Sending the raw files to a cloud OCR, a clo
 - **Consistent tokens.** `Priya Raman` becomes `[PERSON_007]` in every file of the run, and her e-mail becomes
   `[EMAIL_007]`. With a token key the token is the same in every run, and an LLM's answer can be turned back
   into original values from an encrypted vault.
+- **A guard for the chat box.** A prompt typed or pasted for an LLM is checked the same way: values become
+  tokens before it is sent, and the answer gets them back.
 - **A human in the loop.** A reviewer confirms, rejects and adds values in the dashboard; every output is
   written again.
 - **Auditable and measurable.** Every decision goes into a hash-chained audit log, each run has a manifest of
@@ -220,6 +222,21 @@ and the page is read once more; if it cannot be covered, the file is withheld. `
 - **Rehydrate.** `rehydrate` (CLI) or **Redaction → Rehydrate** puts original values back into text that holds
   tokens, and records who did it, for which tokens and why.
 
+### 6. Prompt guard
+
+Documents are one way personal data reaches an LLM; the chat box is the other. **Workspace → Prompt guard**
+(`optiv_pii_shield/guard.py`) takes text typed or pasted for an LLM and runs it through the same detection
+layers, tokens and leak gate. The prompt comes back in its own shape with every value replaced; that text is
+what gets sent. The answer is pasted back and its tokens become values again.
+
+- **One conversation, one set of tokens.** A person or value keeps its token from one prompt to the next, and
+  a person redacted once is looked for in every later prompt, by surname alone too.
+- **Only issued tokens are restored.** A token this conversation did not issue is left as it is.
+- **Nothing is stored.** No prompt or answer is kept. Tokens and their values live in memory until the
+  server stops or the conversation is forgotten; the log holds counts, never text.
+- **It does not send anything.** The safe text is copied by hand into the LLM. Nothing forces a prompt
+  through the guard: that would take a browser extension or a network proxy.
+
 ## Configuration
 
 **Organisation vocabulary.** Allow-listed product and team names, always-redact names and internal ID formats
@@ -267,6 +284,7 @@ background thread; the page shows its stage, page-by-page progress and elapsed t
 | Category | Mode | Steps |
 |---|---|---|
 | Workspace | New scan | Sources, Detection policy (thresholds, profile, verification, pictures, vault, token key), Run |
+| | Prompt guard | Check a prompt, Restore the answer, Conversation |
 | Analytics | Overview | Summary, Files, Pipeline |
 | | Exposure & risk | Ranking, Page heatmap, Residual risk |
 | | Findings | Breakdown, Register, In context, Dropped candidates |
@@ -441,7 +459,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 140 tests, a few minutes on CPU
+pytest -q            # 151 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
@@ -456,6 +474,8 @@ cd web; npm run typecheck
 - **Hardening** (`tests/test_hardening.py`): an unmasked scan passes the text gate and is caught by re-OCR;
   blanked pictures; bookmarks; text, CSV and e-mail inputs; review; the audit chain and manifest (a removed
   line, an edited line and an edited output are each detected); signing; keyed tokens, profiles, rehydration.
+- **Prompt guard** (`tests/test_guard.py`): a prompt keeps its shape, tokens hold across prompts, known people
+  are found again, only issued tokens are restored, the log holds no text.
 - **Server** (`tests/test_server.py`): progress, pause and cancel, the Host and origin guard, the upload cap,
   review and rehydrate over HTTP, shareable downloads free of original values.
 
@@ -476,6 +496,7 @@ optiv_pii_shield/
   redact/              tokens (vault, keyed tokens, profiles, rehydrate), text (LLM output), files (masked
                        copies), leakcheck (text gate), verify (re-OCR of masked copies)
   review.py            review queue, reviewer decisions and additions
+  guard.py             prompt guard: a prompt's values replaced by tokens, and the answer's put back
   audit.py             hash-chained audit log, run manifest, signing, verify-run
   exposure.py          exposure score and residual risk
   workspace.py         per-session working folders and their removal
@@ -492,7 +513,7 @@ web/                   React + TypeScript dashboard (Vite)
   src/api.ts           types of the server's JSON and the calls that fetch it
   src/store.tsx        app state: current run, job in progress, scan settings, queued files
   src/components/      header, step bar, stat tiles, cards, charts, table, form controls
-  src/pages/           one file per mode: Scan, Overview, Exposure, Findings, Extraction, Redaction,
+  src/pages/           one file per mode: Scan, Guard, Overview, Exposure, Findings, Extraction, Redaction,
                        Review, Evaluation, Reports
   src/lib/entities.ts  entity labels, category groups and chart colours
 scripts/               make_samples (fixtures), make_heldout (held-out set), fetch_models, run_extract
