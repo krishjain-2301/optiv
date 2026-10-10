@@ -22,6 +22,7 @@ class Settings:
     min_image_px: int = 120  # skip icons and logos smaller than this on both sides
     detect_faces: bool = True  # faces in pictures and scans are blanked in the masked copy
     detect_qr: bool = True  # QR codes encode text nobody reads by eye: blanked too
+    detect_overprint: bool = True  # text a stamp or pen mark runs across cannot be read reliably: blanked
     face_threshold: float = 0.8
     max_pages: int = 2000  # a PDF with more pages is refused (resource limit)
 

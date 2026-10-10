@@ -1,5 +1,7 @@
 """What the gold-label test of 2026-10-10 found, as tests. Rules only (no NER model), made-up values."""
+import cv2
 import docx
+import numpy as np
 
 from optiv_pii_shield.config import Settings
 from optiv_pii_shield.detect import Detector
@@ -8,7 +10,8 @@ from optiv_pii_shield.detect.rules import IMAGE_RULES, run_rules
 from optiv_pii_shield.detect.vocab import corpus_vocabulary, is_code_word
 from optiv_pii_shield.extract.common import mostly_unreadable
 from optiv_pii_shield.extract.docx import extract_docx
-from optiv_pii_shield.models import Document, Span, Word
+from optiv_pii_shield.extract.visual import overprinted
+from optiv_pii_shield.models import Document, Span, Visual, Word
 
 
 def detect(spans):
@@ -147,6 +150,40 @@ def test_picture_read_mostly_below_the_floor_counts_as_unreadable():
     assert mostly_unreadable([span([0.65] * 7 + [0.95] * 3)], s)
     assert not mostly_unreadable([span([0.65] * 3 + [0.95] * 7)], s)
     assert not mostly_unreadable([span([0.65] * 2)], s)  # a logo with two words is no screenshot
+
+
+def stamped_form():
+    """Two lines of black print; a red stamp frame runs across the second. An outlined box holds the first."""
+    img = np.full((400, 900, 3), 255, np.uint8)
+    cv2.putText(img, "Reviewed", (60, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
+    cv2.rectangle(img, (30, 50), (300, 130), (40, 90, 200), 3)  # a diagram box around its label
+    cv2.putText(img, "t.okpara@example.org", (60, 260), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 2)
+    cv2.rectangle(img, (150, 170), (600, 250), (200, 60, 60), 4)  # the stamp: its lower edge crosses the address
+    return img, {"label": (60, 72, 215, 108), "left": (60, 232, 240, 268), "right": (640, 232, 760, 268)}
+
+
+def test_text_under_a_stamp_is_boxed_and_text_inside_an_outline_is_not():
+    img, words = stamped_form()
+    boxes = overprinted(img, list(words.values()))  # OCR stopped at "t.okpara": the rest of the line is unread
+    assert len(boxes) == 1
+    x0, y0, x1, y1 = boxes[0]
+    assert x0 <= 150 and x1 >= 600 and y0 <= 232 and y1 >= 268  # the whole line, as far as the ink runs through it
+    assert not overprinted(img, [words["label"]])  # an outline goes around its label
+    assert not overprinted(img, [words["label"], (60, 232, 440, 268)])  # the whole line was read: nothing is hidden
+    assert not overprinted(np.full((400, 900, 3), 255, np.uint8), list(words.values()))
+
+
+def test_a_word_under_a_stamp_is_masked_however_sure_ocr_was():
+    text = "Group CRO t.okpara"
+    span = Span(id="s0", file="t", text=text, kind="image_ocr", source="image_ocr", page=1, location="i", image_ref="img1",
+                words=[Word(text="Group", start=0, end=5, conf=0.99, bbox=(10, 10, 60, 30)),
+                       Word(text="CRO", start=6, end=9, conf=0.99, bbox=(70, 10, 110, 30)),
+                       Word(text="t.okpara", start=10, end=18, conf=0.99, bbox=(120, 10, 220, 30))])
+    doc = Document(file="t", path="t", file_type="image", pages=1, spans=[span])
+    doc.visuals.append(Visual("overprint", (65, 8, 400, 32), 1, "img1"))
+    found = [f for f in Detector(Settings(use_spacy=False)).detect_all({"t": doc})["t"] if f.decision != "drop"]
+    assert {f.text for f in found} == {"CRO", "t.okpara"}
+    assert {f.recognizer for f in found if f.text == "CRO"} == {"failclosed:overprint"}
 
 
 # ---------------------------------------------------------------------------- extraction

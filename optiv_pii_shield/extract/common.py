@@ -12,6 +12,7 @@ from PIL import Image
 
 from ..config import Settings
 from ..models import Span, Word
+from . import visual
 from .layout import group_blocks
 from .ocr import OcrLine, get_engine
 
@@ -116,9 +117,14 @@ def image_spans(
     scale: float = 1.0,
     dx: float = 0.0,
     dy: float = 0.0,
+    overprint: Optional[list] = None,
 ) -> tuple[list[Span], Optional[float]]:
-    """OCR an image and return one span per text block. Boxes are in image px * scale + offset."""
+    """OCR an image and return one span per text block. Boxes are in image px * scale + offset.
+    ``overprint`` collects, in the same coordinates, where a stamp runs across the text."""
     lines = ocr_image(img, settings)
+    if overprint is not None:
+        overprint += [(x0 * scale + dx, y0 * scale + dy, x1 * scale + dx, y1 * scale + dy)
+                      for x0, y0, x1, y1 in overprinted(img, lines, settings)]
     spans = []
     for bi, block in enumerate(group_blocks(lines)):
         if dx or dy:
@@ -129,6 +135,13 @@ def image_spans(
         )
     conf = float(np.mean([l.conf for l in lines])) if lines else None
     return spans, conf
+
+
+def overprinted(img: np.ndarray, lines: list[OcrLine], settings: Settings) -> list[tuple]:
+    """Boxes, in pixels of ``img``, of text a stamp or pen mark runs across (see visual.overprinted)."""
+    if not settings.detect_overprint:
+        return []
+    return visual.overprinted(img, [w.bbox for l in lines for w in l.words])
 
 
 def mostly_unreadable(spans: list[Span], settings: Settings) -> bool:

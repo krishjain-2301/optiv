@@ -13,7 +13,7 @@ import numpy as np
 from ..config import Settings
 from ..models import Document, ImageRef, Span, Visual, Word
 from . import visual
-from .common import IdGen, clean, decode_image, image_spans, mostly_unreadable, span_from_lines
+from .common import IdGen, clean, decode_image, image_spans, mostly_unreadable, overprinted, span_from_lines
 from .layout import (_overlap, assign_words_to_cells, find_captioned_figures, find_header_bar_tables, find_image_regions, find_tables, group_blocks, inside,
                      is_screenshot_grid)
 from .ocr import get_engine
@@ -147,8 +147,10 @@ def _native_page(page, pno, doc, ids, settings, counts):
                 continue
             r = rects[0]
             _add_visuals(doc, arr, settings, pno, r.width / arr.shape[1], r.x0, r.y0)
+            struck: list = []
             spans, conf = image_spans(arr, settings, ids=ids, file=doc.file, page=pno, location=ref.location,
-                                      image_ref=ref.id, scale=r.width / arr.shape[1], dx=r.x0, dy=r.y0)
+                                      image_ref=ref.id, scale=r.width / arr.shape[1], dx=r.x0, dy=r.y0, overprint=struck)
+            doc.visuals.extend(Visual("overprint", box, pno) for box in struck)
             _set_status(ref, conf, spans, settings)
             doc.spans.extend(spans)
 
@@ -183,6 +185,8 @@ def _scanned_page(page, pno, doc, ids, settings, counts):
     _add_visuals(doc, img, settings, pno, scale)
 
     lines = engine.read(img)
+    # Page points, like every box of a scanned page.
+    struck = [tuple(v * scale for v in box) for box in overprinted(img, lines, settings)]
     tables, regions = page_layout(img, lines, settings)
     covered = [t.bbox for t in tables] + regions
     free_lines = [l for l in lines if not any(inside(l, box) for box in covered)]
@@ -218,9 +222,11 @@ def _scanned_page(page, pno, doc, ids, settings, counts):
         doc.images.append(ref)
         counts["images"] += 1
         spans, conf = image_spans(img[y0:y1, x0:x1], settings, ids=ids, file=doc.file, page=pno,
-                                  location=ref.location, image_ref=ref.id, scale=scale, dx=x0 * scale, dy=y0 * scale)
+                                  location=ref.location, image_ref=ref.id, scale=scale, dx=x0 * scale, dy=y0 * scale,
+                                  overprint=struck)
         _set_status(ref, conf, spans, settings)
         doc.spans.extend(spans)
+    doc.visuals.extend(Visual("overprint", box, pno) for box in struck)
 
     # Running text.
     heights = [l.height for l in free_lines] or [1]

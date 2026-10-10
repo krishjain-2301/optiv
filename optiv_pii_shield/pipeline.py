@@ -240,8 +240,8 @@ def redact(res: RunResult, progress: Optional[Progress] = None, start: float = 0
         res.redacted[f] = text
         if doc.visuals:
             kinds = [v.kind for v in doc.visuals]
-            doc.warnings.append(f"{kinds.count('face')} face(s) and {kinds.count('qr')} QR code(s) found in pictures; "
-                                "they are blanked in the masked copy")
+            doc.warnings.append(f"{kinds.count('face')} face(s), {kinds.count('qr')} QR code(s) and {kinds.count('overprint')} "
+                                "stretch(es) of text under a stamp found in pictures; they are blanked in the masked copy")
 
     outputs: dict[str, Path] = {}
     if res.out_dir is not None:

@@ -261,19 +261,47 @@ IDENT_TEXT = re.compile(r"\d|@")
 IDENT_IMAGE = re.compile(r"\d|@|[A-Za-z]{2,}[._][A-Za-z]{2,}")
 
 
+UNDER_STAMP = 0.3  # share of a word's box inside a struck stretch of text
+
+
+def _share_inside(box, other) -> float:
+    w = min(box[2], other[2]) - max(box[0], other[0])
+    h = min(box[3], other[3]) - max(box[1], other[1])
+    area = (box[2] - box[0]) * (box[3] - box[1])
+    return w * h / area if w > 0 and h > 0 and area > 0 else 0.0
+
+
 def fail_closed_findings(doc: Document, findings: list[Finding], s: Settings) -> list[Finding]:
     """L0: OCR words read with low confidence that look like identifiers are masked and queued for
     review, so an unreadable identifier never reaches the LLM. Text read from screenshots gets a
     stricter floor (low_conf_image_ocr) and a wider notion of "identifier-like": besides digits and
-    "@", dotted tokens such as damaged e-mails or domains ("martinezmaomeccrp.com")."""
+    "@", dotted tokens such as damaged e-mails or domains ("martinezmaomeccrp.com").
+
+    A word on a stretch of line that a stamp runs across (Visual "overprint") is masked whatever
+    it looks like and however sure OCR was: OCR stopped reading part-way along that line, and
+    the last word it returned holds letters of what it left out ("Group CFOtokp")."""
     covered: dict[str, list[tuple[int, int]]] = {}
     for f in findings:
         if f.decision != "drop":
             covered.setdefault(f.span_id, []).append((f.start, f.end))
+    struck = [v for v in doc.visuals if v.kind == "overprint"]
     out = []
     for span in doc.spans:
         if span.source == "native":
             continue
+        for w in span.words if struck else []:
+            under = [v for v in struck if (v.image_ref == span.image_ref if v.image_ref else v.page == span.page)]
+            if not w.bbox or not any(_share_inside(w.bbox, v.bbox) >= UNDER_STAMP for v in under):
+                continue
+            if any(a < w.end and b > w.start for a, b in covered.get(span.id, [])):
+                continue
+            covered.setdefault(span.id, []).append((w.start, w.end))
+            out.append(Finding(span_id=span.id, file=span.file, start=w.start, end=w.end, text=w.text,
+                               entity_type="LOW_CONFIDENCE_OCR", score=0.5, recognizer="failclosed:overprint",
+                               layer="L0 fail-closed", decision="review",
+                               reasons=["a stamp or pen mark runs across this text, so what OCR read here cannot be relied on"],
+                               page=span.page, location=span.location, kind=span.kind, source=span.source,
+                               context_type="image" if span.source == "image_ocr" else "narrative"))
         image = span.source == "image_ocr"
         floor = s.low_conf_image_ocr if image else s.low_conf_ocr
         ident = IDENT_IMAGE if image else IDENT_TEXT

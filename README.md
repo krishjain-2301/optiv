@@ -31,7 +31,7 @@ policy. So PII Shield runs entirely on one machine, and when it is unsure it red
 |---|---|
 | **Reads** | PDF (text and scanned), DOCX, PPTX, XLSX, images, e-mail, meeting transcripts, CSV and text, including comments, speaker notes, alt text, document properties and tracked changes |
 | **Detects** | Four layers: rules with checksums, a local name model (spaCy), document structure, and propagation of every confirmed person across all files. 25+ categories, plus credentials in code and configuration |
-| **Redacts** | Stable tokens (`Priya Raman` is `[PERSON_007]` in every file), LLM-ready Markdown, and masked copies that keep page count and layout. Faces, QR codes and unreadable pictures are blanked |
+| **Redacts** | Stable tokens (`Priya Raman` is `[PERSON_007]` in every file), LLM-ready Markdown, and masked copies that keep page count and layout. Faces, QR codes, unreadable pictures and text under a stamp are blanked |
 | **Checks itself** | A leak gate searches every masked file for the original values, then each masked page is OCR'd again. A file that fails is not released |
 | **Guards prompts** | Text typed for a chatbot gets the same treatment; source code, marked-confidential text and copies of registered documents are refused outright |
 | **Keeps a human in the loop** | Uncertain findings are redacted *and* queued; a reviewer confirms, rejects or adds values and every output is written again |

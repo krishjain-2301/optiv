@@ -66,10 +66,11 @@ class ImageRef:
 
 @dataclass
 class Visual:
-    """Something in a picture that identifies a person without being text: a face, or a QR code
-    (which encodes text nobody can read by eye). It is blanked in the masked copy."""
+    """Something in a picture that identifies a person without being readable text: a face, a QR
+    code (which encodes text nobody can read by eye), or text a stamp runs across (which OCR
+    cannot read reliably). It is blanked in the masked copy."""
 
-    kind: str  # face | qr
+    kind: str  # face | qr | overprint
     bbox: BBox  # page points (PDF) when image_ref is None, else pixels of that image
     page: Optional[int] = None
     image_ref: Optional[str] = None

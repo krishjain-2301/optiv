@@ -65,7 +65,7 @@ That rules out the obvious shortcut. Sending the raw files to a cloud OCR, a clo
 |---|---|
 | **Extract** | Layout-aware OCR, ruled tables read cell by cell, OOXML walkers for Office files, a span map back to page, element and bounding box |
 | **Detect** | Rules and checksums, spaCy NER (optional GLiNER-PII), structural cues, whole-run name propagation, low-confidence OCR guard |
-| **Redact** | LLM-ready Markdown, masked copies with layout preserved, metadata cleared, faces / QR codes / unread pictures blanked, redaction profiles |
+| **Redact** | LLM-ready Markdown, masked copies with layout preserved, metadata cleared, faces / QR codes / unread pictures / text under a stamp blanked, redaction profiles |
 | **Verify** | A text leak gate, then every masked page and picture is OCR'd again and searched for the original values |
 | **Review** | Review queue, add missed values, re-redact; decisions export as gold labels |
 | **Report** | Exposure register, exposure score and residual risk, audit chain, run manifest, AES-256-GCM token vault |
@@ -139,6 +139,15 @@ like any other, and the positions are what the masks are drawn from.
 
 Pictures and scanned pages are also searched for **faces** (YuNet) and **QR codes**. Nothing is recognised: a
 face is found, never matched to a person.
+
+**Text under a stamp.** OCR reads a line that a stamp or a pen mark runs across as far as it can and stops:
+a few letters joined to the word before, the rest not at all, and it reports what it did read with
+confidence. Where coloured ink drawn in strokes runs through a word of black print, and further along the
+same ink there is print that no word OCR read accounts for, the line is blanked in the masked copy as far as
+the ink keeps running through it, and every word OCR read there is masked as `LOW_CONFIDENCE_OCR` for review,
+whatever it looks like. A box drawn around its label is not a stamp (its outline passes around the words),
+and a call-out line across words that were all read changes nothing. Not found: a mark in black ink, and a
+line under a stamp where OCR returned something for every part of it.
 
 Refused with a message, never passed on: legacy binary Office and Outlook files (`.doc`, `.xls`, `.ppt`, `.msg`),
 password-protected PDFs, PDFs over 2,000 pages, and packages that unpack to more than 2 GB.
@@ -584,7 +593,7 @@ optiv_pii_shield/
   models.py            Span / Word / ImageRef / Visual / Document / Finding
   modelstore.py        model files pinned by SHA-256
   extract/             sniff, pdf, docx, pptx, xlsx, image, plain (text/CSV/e-mail), transcript (.vtt/.srt), ooxml walkers, layout
-                       (tables/regions), ocr backends, visual (faces, QR codes)
+                       (tables/regions), ocr backends, visual (faces, QR codes, text under a stamp)
   detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver, vocab
                        (ordinary words learned from the documents), secrets
                        (names and values of credentials), code (is this text source code?), markings
@@ -628,7 +637,7 @@ tests/
 | 2 Oct 2026 | An external review found leaks. Fixed: names in any letter case and with accents, hidden OOXML parts, an unsafe download zip, coverage gaps. Added the **leak gate**, the Faker held-out set, hard failure on missing models, the encrypted vault, session clean-up, the exposure score with page heatmap and residual risk, XLSX, organisation vocabulary in YAML, pinned dependencies and CI. Package renamed to `optiv_pii_shield` |
 | 3 Oct 2026 | GLiNER measured and constrained (hits must look like a value of their category). The Streamlit demo replaced by a FastAPI server and a React dashboard. README and UI polish |
 | 7 Oct 2026 | A second review showed the leak gate could not see pixels. Added the **re-OCR verification** of masked copies, blanking of faces, QR codes and unread pictures, the **review** workflow with re-redaction, **rehydration**, keyed tokens, redaction profiles, the **hash-chained audit log and run manifest** with signing, model pinning by SHA-256, the server's request guard and upload cap, text / CSV / e-mail inputs, PDF bookmarks, new identifier categories, and an offline test |
-| 10 Oct 2026 | First gold-label test on the three case-study files (AI-checked key). It found field labels taken for people and spread by propagation, first names left beside a masked surname, IDs broken over a line, damaged values in screenshots, an unreadable screenshot left in the masked copy, and line breaks dropped from DOCX cells. Fixed: the vocabulary check, form fields in cells, name extension, repeated propagation, new rules for titles, SSN endings, addresses and screenshot text, mostly unreadable pictures withheld, DOCX line breaks kept. On those files: findings that are not personal data 592 to 32, missed instances 49 to 6, none of them in the LLM text. The held-out set did not move |
+| 10 Oct 2026 | First gold-label test on the three case-study files (AI-checked key). It found field labels taken for people and spread by propagation, first names left beside a masked surname, IDs broken over a line, damaged values in screenshots, an unreadable screenshot left in the masked copy, and line breaks dropped from DOCX cells. Fixed: the vocabulary check, form fields in cells, name extension, repeated propagation, new rules for titles, SSN endings, addresses and screenshot text, mostly unreadable pictures withheld, DOCX line breaks kept. On those files: findings that are not personal data 592 to 32, missed instances 49 to 6, none of them in the LLM text. The held-out set did not move. One of the six, an e-mail address under a stamp that OCR read only the first letters of, stayed visible in the masked PDF: text that a stamp runs across and OCR did not read is now blanked, and the words read beside it are masked |
 
 ## Contributing
 

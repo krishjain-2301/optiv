@@ -84,8 +84,10 @@ def ocr_part(part, doc: Document, ids: IdGen, settings: Settings, page, location
         return []
     doc.visuals.extend(Visual(kind, box, page, ref.id) for kind, box in visual.detect(arr, settings))
     # Word boxes stay in image pixels so the masking step can paint over them on the image itself.
+    struck: list = []
     spans, conf = image_spans(arr, settings, ids=ids, file=doc.file, page=page, location=ref.location,
-                              image_ref=ref.id, scale=scale, dx=dx, dy=dy)
+                              image_ref=ref.id, scale=scale, dx=dx, dy=dy, overprint=struck)
+    doc.visuals.extend(Visual("overprint", box, page, ref.id) for box in struck)
     ref.ocr_conf = round(conf, 3) if conf is not None else None
     if not spans:
         ref.ocr_status = "no_text"

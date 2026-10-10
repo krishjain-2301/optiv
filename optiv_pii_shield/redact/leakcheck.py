@@ -73,7 +73,8 @@ def _forms(value: str) -> set[str]:
 def _values(vault: TokenVault, findings: dict | None) -> list[tuple[str, str]]:
     """(value, token) pairs to search for. Single-word person hits in the review band (a lone
     capitalised word NER was unsure about: "Cloud", "Training") are redacted where they were found
-    but are not evidence that the word is personal data everywhere else, so they are not needles."""
+    but are not evidence that the word is personal data everywhere else, so they are not needles.
+    Neither is a word masked only because a stamp runs across it: it is unreadable there, not a value."""
     if findings is None:
         return [(v, t) for t, vs in vault.values.items() for v in vs]
     out = []
@@ -82,6 +83,8 @@ def _values(vault: TokenVault, findings: dict | None) -> list[tuple[str, str]]:
             if f.decision not in ("redact", "review") or not f.token:
                 continue
             if f.entity_type == "PERSON" and len(f.text.split()) == 1 and f.decision == "review":
+                continue
+            if f.recognizer == "failclosed:overprint":
                 continue
             out.append((f.text, f.token))
     return out
