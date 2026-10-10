@@ -10,7 +10,7 @@
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![React](https://img.shields.io/badge/dashboard-React%20%2B%20Vite-61dafb?logo=react&logoColor=black)
 ![Offline](https://img.shields.io/badge/runs-100%25%20offline-2ea44f)
-![Tests](https://img.shields.io/badge/tests-249-2ea44f)
+![Tests](https://img.shields.io/badge/tests-271-2ea44f)
 
 </div>
 
@@ -54,11 +54,21 @@ flowchart LR
 |---|---|---|---|
 | Held-out set (Faker, 6 locales, unseen during development) | Structured identifiers **104 of 104**; person names **90 of 115** | 0 false tokens in 20 decoy paragraphs | The weak spot is lowercase names (3 of 17) |
 | Synthetic fixtures (76 labels) | **100%** | **98.7%** | Optimistic: written alongside the detectors |
-| The three case-study files (1,242 labels) | **96.1%**: PDF 96.2%, DOCX 84.0%, PPTX 100% | **66.8%**: PDF 94.2%, DOCX 7.4%, PPTX 98.4% | Answer key checked by an AI assistant, not yet by a person |
+| The three case-study files (1,177 labels) | **99.5%**: PDF 99.4%, DOCX 100%, PPTX 100% | **97.3%**: PDF 97.7%, DOCX 85.5%, PPTX 100% | Answer key checked by an AI assistant, not yet by a person. The detectors were then fixed against these files |
 
-On the case-study files every e-mail address, phone number and employee ID in body text and tables was found;
-the misses are mostly text inside screenshots. The low DOCX precision is one fault: common words such as
-"Question" and "Response" are taken for names in that file. Structure retention is 100% for the DOCX and PPTX.
+The case-study figures are from 10 Oct 2026, after fixing what a first test on the same files had found.
+That first test scored 96.1% recall and 66.8% precision: common words such as "Question" and "Response" were
+taken for names in the DOCX, and 42 values stayed readable in the text for the LLM. Now:
+
+- **Missed: 6 of 1,177, none of them readable.** Five sit in a screenshot too small to read, which is blanked
+  whole; one is an e-mail address under a stamp, which is blanked. None is in the text for the LLM.
+- **Not personal data: 32 of 1,203 findings.** 20 are unreadable words in pictures, masked on purpose; the rest
+  are OCR noise held for review.
+- **Masked copies:** all three are written, and the re-read of each found nothing still legible.
+
+Because the fixes were written against these three files, these figures show that the faults found are gone,
+not how the tool does on files it has not seen. The held-out set is the measure for that, and it did not move.
+Structure retention is 100% for the DOCX and PPTX; for the scanned PDF it is not scored yet.
 
 ## Quick start
 
@@ -108,7 +118,7 @@ python -m optiv_pii_shield run path\to\*.pdf --out out
 ## Tech stack
 
 Python · Presidio · spaCy · RapidOCR (ONNX Runtime) · PyMuPDF · FastAPI · React + TypeScript + Vite · pytest ·
-GitHub Actions (lint, dependency audit, 249 tests, dashboard build)
+GitHub Actions (lint, dependency audit, 271 tests, dashboard build)
 
 ## More
 

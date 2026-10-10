@@ -527,9 +527,9 @@ positives, so it stays off by default.
 
 ## Known limits
 
-- **Recall on the real case-study files is AI-checked, not hand-checked.** The answer key (1,242 labels) was
-  checked by an AI assistant on 10 Oct 2026: recall 96.1%, precision 66.8% (see the README). A person has not
-  yet verified the key.
+- **Recall on the real case-study files is AI-checked, not hand-checked.** The answer key (1,177 labels) was
+  checked by an AI assistant on 10 Oct 2026: recall 99.5%, precision 97.3% (see the README), after the faults a
+  first test had found (96.1%, 66.8%) were fixed against the same files. A person has not yet verified the key.
 - **Names with no evidence leak.** Lowercase names whose given name is not in
   `optiv_pii_shield/data/given_names.txt`, non-English names that the English model does not tag and that no
   keyword, header or confirmed mention supports, and names garbled by OCR beyond one or two digit confusions.
@@ -545,7 +545,7 @@ positives, so it stays off by default.
 ## Tests
 
 ```powershell
-pytest -q            # 249 tests, a few minutes on CPU
+pytest -q            # 271 tests, a few minutes on CPU
 ruff check .
 cd web; npm run typecheck
 ```
