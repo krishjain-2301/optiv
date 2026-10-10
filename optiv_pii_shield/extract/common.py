@@ -131,6 +131,15 @@ def image_spans(
     return spans, conf
 
 
+def mostly_unreadable(spans: list[Span], settings: Settings) -> bool:
+    """A picture where at least half of the words were read below the screenshot confidence floor
+    (a screenshot shrunk until its text blurs). The words OCR did make out are no guide to what
+    the picture shows, so it is treated like a picture that could not be read: its text is kept
+    from the LLM and the picture is blanked in the masked copy."""
+    words = [w for s in spans for w in s.words if w.conf is not None]
+    return len(words) >= 5 and 2 * sum(w.conf < settings.low_conf_image_ocr for w in words) >= len(words)
+
+
 def md_table(rows: Iterable[list[str]]) -> str:
     rows = [[c.replace("|", "\\|").replace("\n", "<br>") for c in r] for r in rows]
     if not rows:

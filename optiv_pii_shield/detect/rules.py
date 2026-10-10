@@ -71,6 +71,14 @@ RULES: list[Rule] = [
     Rule("card_last4", "CREDIT_CARD",
          r"(?i:\bending(?:\s+in)?|\bends\s+in|\blast\s+(?:4|four)(?:\s+digits)?|x{4}|\*{4}|•{4})[\s:#-]{0,4}(\d{4})\b", 0.62,
          group=1),
+    # "the last four digits of your social security number (4417)": the number is named, then quoted.
+    Rule("ssn_last4", "US_SSN",
+         r"(?i:\blast\s+(?:4|four)(?:\s+digits)?\s+of\s+(?:[a-z']+\s+){0,3}(?:social\s+security(?:\s+number)?|ssn|ss#))"
+         r"[\s:#(\"'-]{0,5}(?:is\s+|are\s+)?[(\"']?(\d{4})\b", 0.7, group=1),
+    # A title in front of a capitalised word is a person, with no first name to go by ("Dear Ms Varga-Lindt").
+    Rule("honorific_name", "PERSON",
+         r"\b(?:Mr|Mrs|Ms|Miss|Mx|Dr|Prof|Shri|Smt)\.?[ \u00a0]([A-Z][^\W\d_]+(?:[-'’][A-Z][^\W\d_]+)*"
+         r"(?:[ \u00a0][A-Z][^\W\d_]+(?:[-'’][A-Z][^\W\d_]+)*){0,2})", 0.7, group=1),
     Rule("in_aadhaar", "IN_AADHAAR", r"(?<![\d-])\d{4}([ -]?)\d{4}\1\d{4}(?![\d-])", 0.40, v.check_aadhaar,
          ctx("IN_AADHAAR")),
     Rule("in_gstin", "TAX_ID", r"\b\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]\b", 0.55, v.check_gstin, ctx("TAX_ID")),
@@ -147,9 +155,9 @@ RULES: list[Rule] = [
          0.15, v.check_date, ctx("DATE_OF_BIRTH"), requires_context=True),
     Rule("street_address", "ADDRESS",
          rf"\b\d{{1,5}}[A-Za-z]?\s+(?:[A-Z][A-Za-z'-]+\s+){{1,3}}{STREET}(?![A-Za-z])"
-         r"(?:,?\s+(?:Apt|Suite|Unit|Flat)\.?\s*\w+)?"
+         r"(?:,?\s+(?:Apartment|Apt|Suite|Ste|Unit|Flat|Floor|Fl)\.?\s*#?\w+)?"
          r"(?:,\s*[A-Z][A-Za-z]+(?:\s[A-Z][A-Za-z]+)?)?"
-         r"(?:,?\s*[A-Z]{2}\s+\d{5}(?:-\d{4})?)?"
+         r"(?:,?\s*[A-Z]{2}\s*\d{5}(?:-\d{4})?)?"  # "TX78664": OCR drops the space
          r"(?:,?\s*[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})?",
          0.65, None, ctx("ADDRESS")),
 ]
@@ -164,6 +172,10 @@ def _find_context(text: str, start: int, end: int, words: tuple[str, ...]) -> Op
     for w in words:
         if re.search(rf"(?<![a-z]){re.escape(w)}(?![a-z])", window):
             return w
+    # OCR of form labels drops the spaces ("DATEOFBIRTH"): phrases are also looked for written as one word.
+    for w in words:
+        if " " in w and re.search(rf"(?<![a-z]){re.escape(w.replace(' ', ''))}(?![a-z])", window):
+            return w
     return None
 
 
@@ -175,9 +187,27 @@ IMAGE_RULES: list[Rule] = [
     Rule("phone_ocr_confusable", "PHONE_NUMBER",
          r"(?<![0-9/+-])\+[0-9OIl]{1,3}[\s.-]?(?:\([0-9OIl]{1,5}\)[\s.-]?)?[0-9OIl]{1,12}(?:[\s.-][0-9OIl]{1,8}){0,5}(?![\w/-])",
          0.55, min_digits=7),
+    # Log lines run words together and misread more digits ("phone=+1-212-555-e147resultapproved").
+    Rule("phone_ocr_glued", "PHONE_NUMBER",
+         r"(?<![0-9/+-])\+[0-9OIl]{1,3}[\s.-]?(?:\([0-9OIl]{1,5}\)[\s.-]?)?[0-9OIleoSB]{2,5}(?:[\s.-][0-9OIleoSB]{2,5}){1,4}(?![0-9/-])",
+         0.5, min_digits=7, unless="phone_ocr_confusable"),
+    # ".com" is often read as ".con", ".ccm", ".corn".
     Rule("email_ocr_no_at", "EMAIL_ADDRESS",
-         r"(?<![\w@.-])[a-z][a-z0-9_-]*(?:[._-][a-z0-9-]+)*\.(?:com|org|net|io|co|uk|de|in|pl|example|gov|edu|info|biz)(?![\w@-])",
+         r"(?<![\w@.-])[a-z][a-z0-9_-]*(?:[._-][a-z0-9-]+)*\.(?:com|con|ccn|ccm|cam|corn|c0m|org|net|io|co|uk|de|in|pl|example"
+         r"|gov|edu|info|biz)(?![\w@-])",
          0.5),
+    # "name.unreadabledomain.xyz": a long run of letters after a dot where the "@" and the domain were.
+    Rule("email_ocr_garbled", "EMAIL_ADDRESS",
+         r"(?<![\w@.-])[a-z][a-z0-9_-]+\.[a-z][a-z0-9]{11,}(?:\.[a-z0-9]{2,})+", 0.45),
+    # An address after its label, with digits misread as letters ("src_ip-s2.i60.14.8").
+    Rule("ip_ocr_labelled", "IP_ADDRESS",
+         r"(?i:(?<![a-z])(?:src|dst|client|remote)?_?[i1l]p[-=: ]{1,2})([0-9A-Za-z]{1,3}(?:\.[0-9A-Za-z]{1,3}){2}\.[0-9OIlSB]{1,3})(?![0-9.])",
+         0.5, group=1, min_digits=3),
+    # Initials and a surname written as one ("T.R.Moreau", "D.R.Kumar"): how names sit in small table text.
+    Rule("initials_surname", "PERSON",
+         r"(?<![\w.])(?:[A-Z]\.){1,3}[A-Z][^\W\d_]{2,}(?:-[A-Z][^\W\d_]+)?(?![\w@])", 0.5),
+    # The organisation's ID formats (org.yaml, image_id_patterns), as OCR writes them.
+    *[Rule(r["name"], r["entity"], r["pattern"], float(r["score"]), min_digits=3) for r in ORG["image_id_patterns"]],
     Rule("name_dot_surname", "EMAIL_ADDRESS",
          r"(?<![\w@.-])[a-z]{2,}[._](?!(?:com|org|net|io|docx?|pdf|xlsx?|pptx?|txt|csv|json|png|jpe?g|exe|html?|py)\b)"
          r"[a-z]{2,}(?![\w@.-])", 0.45),

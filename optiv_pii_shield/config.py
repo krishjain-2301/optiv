@@ -108,13 +108,14 @@ def load_org_config(path: str | Path | None = None) -> dict:
     ``path``, else $PII_SHIELD_ORG_CONFIG, else the bundled optiv_pii_shield/data/org.yaml."""
     p = Path(path or os.environ.get("PII_SHIELD_ORG_CONFIG") or Path(__file__).parent / "data" / "org.yaml")
     data = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
-    for i, rule in enumerate(data.get("id_patterns") or []):
-        missing = {"name", "entity", "pattern", "score"} - set(rule)
-        if missing:
-            raise ValueError(f"{p}: id_patterns[{i}] is missing {sorted(missing)}")
+    for key in ("id_patterns", "image_id_patterns"):
+        data[key] = data.get(key) or []
+        for i, rule in enumerate(data[key]):
+            missing = {"name", "entity", "pattern", "score"} - set(rule)
+            if missing:
+                raise ValueError(f"{p}: {key}[{i}] is missing {sorted(missing)}")
     data.setdefault("allow_list", [])
     data.setdefault("deny_list", [])
-    data.setdefault("id_patterns", [])
     for key in ("confidential_terms", "markings"):
         data[key] = [str(x) for x in data.get(key) or []]
     data["guard_policy"] = dict(data.get("guard_policy") or {})

@@ -62,3 +62,14 @@ luca marco matteo paolo riccardo roberta salvatore silvia stefano valentina
 chen hiroshi hiroko kenji ling mei ming naoko satoshi takashi wei xiaoming yuki yumi zhang
 ahmed ali amir aisha fatima hassan hussein ibrahim karim khalid layla mariam mohammed muhammad mustafa nadia
 omar rashid samir yasmin youssef zainab ama amara chidi chinedu femi kwame nkechi oluwaseun tendai thabo
+
+# --- Short forms and further common names (none of them an everyday English word)
+abby alec alfie andy angie barry becky benny bernie betty bobby brad bret brett carla carly cathy charlie chris
+cindy clint connie danny dave davey debbie donna doug eddie ellie emma erik ernie freddie 
+gail geoff gerry gina greg gwen hank ian jake jamie jane janet jeff jen jenna jenny jeremy jerry jess
+jessie jim jimmy joanna jodie joe joel joey johnny jon jonny judy julie karl kate kathy katie kenny
+kim kirsty kris larry leo lena lexi liam libby lisa liz lizzie luke lynn maddie maggie mandy marc
+marcia marty matt mickey mike mikey molly nate neil nicky nikki noel patty
+pete phil phoebe rachel rhys ricky rita robbie roger ronnie roy russ ruth ryan sam
+sammy scott sean seth shaun shelly simon stacey steve stevie susie tamara terri
+terry theo tim timmy tina toby todd tom tommy toni tony tracey trish vicky vince wendy zach zoe

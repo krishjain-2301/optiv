@@ -16,15 +16,23 @@ from functools import lru_cache
 from presidio_analyzer import AnalyzerEngine, RecognizerRegistry
 from presidio_analyzer.predefined_recognizers import SpacyRecognizer
 
-from ..config import Settings
+from ..config import ORG, Settings
 from ..models import Document, Finding, Span
 from ..errors import ModelMissing
 from .ner import build_nlp_engine, load_gliner
 from .names import upper_runs
-from .propagation import build_index, propagate
+from .propagation import build_index, propagate, propagate_ids
 from .resolver import finalise
-from .rules import IMAGE_RULES, RuleRecognizer, run_rules
-from .structure import structure_findings
+from .rules import IMAGE_RULES, RULES, RuleRecognizer, run_rules
+from .structure import name_list_findings, structure_findings
+from .vocab import corpus_vocabulary
+
+PROPAGATION_ROUNDS = 3
+ID_RULES = [r for r in RULES if r.name in {p["name"] for p in ORG["id_patterns"]}]
+ID_ENTITIES = sorted({r.entity for r in ID_RULES})
+BROKEN_ID = re.compile(r"(?<![A-Za-z0-9])([A-Z]{2,5}-)\s*$")
+BROKEN_ID_REACH = 6  # text blocks: the cells of the same table row come in between
+NOT_NAME_POS = {"VERB", "AUX", "ADJ", "ADV", "ADP", "DET", "PRON", "SCONJ", "CCONJ", "INTJ", "PART"}
 
 log = logging.getLogger(__name__)
 OUTPUT_ENTITIES = [
@@ -90,9 +98,15 @@ class Detector:
         # properties ("Drafted for Priya Raman", description, comments) are prose and get NER too.
         prose = span.kind != "metadata" or len(span.text.split()) >= 3
         use_ner = prose and any(c.isupper() for c in span.text)
+        not_names: set[int] = set()
         if self.analyzer is not None and use_ner:
-            raw = self.analyzer.analyze(text=text, language="en", entities=self.analyzer_entities, score_threshold=0.0)
+            parsed = self.analyzer.nlp_engine.process_text(text, "en")
+            raw = self.analyzer.analyze(text=text, language="en", entities=self.analyzer_entities, score_threshold=0.0,
+                                        nlp_artifacts=parsed)
             raw = list(raw) + self._recased_ner(text)
+            # The same model that guessed PERSON also tags parts of speech: a lone word it reads as
+            # a verb or an adjective ("Navigate to Settings") is not a name.
+            not_names = {t.idx for t in parsed.tokens if t.pos_ in NOT_NAME_POS}
         else:
             raw = run_rules(text, OUTPUT_ENTITIES)
         if span.source == "image_ocr":
@@ -106,17 +120,26 @@ class Detector:
         out = []
         for r in raw:
             if r.start < off:
-                continue  # starts in the neighbouring text: that span detects it on its own
+                # Starts in the neighbouring text: that span detects it on its own. Except a value
+                # broken after a hyphen at the end of the line before ("(VEN-" / "KD-6031)"): neither
+                # span holds it whole, so the half in this one is kept.
+                if not (r.end > off and r.entity_type != "PERSON" and text[r.start:off].endswith("-\n")):
+                    continue
+                r.start = off
             start, end = r.start - off, r.end - off
             meta = r.recognition_metadata or {}
             name = meta.get(r.RECOGNIZER_NAME_KEY, "unknown")
+            decision = "redact"  # the default; the resolver routes by score
             if name == "SpacyRecognizer":
                 name, layer, reasons = "ner:spacy", "L2 ner", [f"spaCy NER labelled PERSON (score {r.score:.2f})"]
+                if r.start in not_names and len(text[r.start:r.end].split()) == 1:
+                    decision = "drop"
+                    reasons.append("a single word the model itself tags as a verb, adjective or function word")
             else:
                 layer, reasons = meta.get("layer", "L2 ner"), list(meta.get("reasons", []))
             out.append(Finding(span_id=span.id, file=span.file, start=start, end=end, text=span.text[start:end],
                                entity_type=r.entity_type, score=round(r.score, 3), recognizer=name, layer=layer,
-                               reasons=reasons))
+                               reasons=reasons, decision=decision))
         out.extend(structure_findings(span, self.allow))
         out.extend(term_findings(span, self.settings.confidential_terms))
         return out
@@ -155,7 +178,31 @@ class Detector:
             prev = span
             if on_span is not None and (i % 20 == 0 or i == len(doc.spans)):
                 on_span(i)
+        findings.extend(self._broken_ids(doc))
         return findings
+
+    def _broken_ids(self, doc: Document) -> list[Finding]:
+        """An ID broken after its prefix ("... Okpara (VEN-"), whose second half OCR read as a block
+        of its own a few lines down ("KD-6031)"). Joined, the two halves match one of the
+        organisation's ID formats; the second half is masked where it stands."""
+        out = []
+        for i, span in enumerate(doc.spans):
+            m = BROKEN_ID.search(span.text)
+            if not m or not ID_ENTITIES:
+                continue
+            head = m.group(1)
+            for nxt in doc.spans[i + 1:i + 1 + BROKEN_ID_REACH]:
+                if nxt.page != span.page:
+                    break
+                hit = next((r for r in run_rules(head + nxt.text, ID_ENTITIES, ID_RULES) if r.start == 0 and r.end > len(head)), None)
+                if hit:
+                    end = hit.end - len(head)
+                    out.append(Finding(span_id=nxt.id, file=nxt.file, start=0, end=end, text=nxt.text[:end],
+                                       entity_type=hit.entity_type, score=round(hit.score, 3), recognizer="rule:broken_id",
+                                       layer="L1 rules",
+                                       reasons=[f"second half of an ID broken after '{head}' at {span.location}"]))
+                    break
+        return out
 
     def _prefix(self, span: Span, prev: Span | None) -> str:
         """Neighbouring text given to recognisers so labels in a header or previous line count as context."""
@@ -178,13 +225,24 @@ class Detector:
             report = (lambda n, f=f, base=base: on_progress(f, base + n, total)) if on_progress else None
             first[f] = self.detect_document(d, report)
             base += len(d.spans)
-        resolved = finalise(first, docs, s)
+        vocab = corpus_vocabulary(docs)
+        resolved = finalise(first, docs, s, vocab)
         if s.propagate_persons:
-            idx = build_index(resolved, s.extra_deny_list)
-            extra = propagate(docs, idx)
-            for f in extra:
+            # A name completed in one round ("Okpara" -> "Ngozi C. Okpara") is a new person to
+            # look for in the next, so propagation repeats until it learns nothing new.
+            raw, known = {f: list(fs) for f, fs in first.items()}, set()
+            for _ in range(PROPAGATION_ROUNDS):
+                idx = build_index(resolved, s.extra_deny_list)
+                if set(idx.canon) <= known:
+                    break
+                known = set(idx.canon)
+                first = {f: list(fs) for f, fs in raw.items()}
+                for f in propagate(docs, idx, vocab) + name_list_findings(docs, resolved, self.allow):
+                    first[f.file].append(f)
+                resolved = finalise(first, docs, s, vocab)
+            for f in propagate_ids(docs, resolved):
                 first[f.file].append(f)
-            resolved = finalise(first, docs, s)
+            resolved = finalise(first, docs, s, vocab)
             self.person_index = idx
         else:
             self.person_index = build_index(resolved, s.extra_deny_list)

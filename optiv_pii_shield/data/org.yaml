@@ -138,13 +138,23 @@ guard_policy:
 # Internal identifier formats. Each becomes an L1 rule: name, entity (category), pattern, score.
 # OCR glues neighbours on ("EMP-41877sV", "EMP-41077IAM"), so there is no trailing \b; O/I/l read
 # for 0/1 are tolerated inside the number, but an ID must end on a real digit unless nothing
-# alphanumeric follows.
+# alphanumeric follows. A narrow table column breaks an ID after a hyphen ("VEN-" / "KD-6031"), so
+# one white-space character, a line break included, is allowed there.
 id_patterns:
   - name: cadence_person_id
     entity: EMPLOYEE_ID
-    pattern: '(?<![0-9])(?:EMP|DIR|STF|CON|USR)-(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))'
+    pattern: '(?<![0-9])(?:EMP|DIR|STF|CON|USR)-\s?(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))'
     score: 0.88
   - name: cadence_vendor_id
     entity: VENDOR_ID
-    pattern: '(?<![0-9])(?:MER|VEN|SUP)-[A-Z]{2}-(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))'
+    pattern: '(?<![0-9])(?:MER|VEN|SUP)-\s?[A-Z]{2}-\s?(?:[0-9OIl]{2,6}[0-9]|[0-9OIl]{3,7}(?![0-9A-Za-z]))'
     score: 0.80
+
+# The same formats as OCR writes them in screenshots: the hyphen read as a space or lost, a digit
+# read as B, S or Z ("EMP 47216", "EMP-4B216"). Used on text read from pictures only; at least
+# three real digits are required. Same fields as id_patterns.
+image_id_patterns:
+  - name: cadence_person_id_ocr
+    entity: EMPLOYEE_ID
+    pattern: '(?<![A-Za-z0-9])(?:EMP|DIR|STF|CON|USR)[- ]?[0-9OIlBSZ]{4,7}(?![0-9A-Za-z])'
+    score: 0.5

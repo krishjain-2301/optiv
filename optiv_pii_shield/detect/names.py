@@ -32,6 +32,10 @@ NAME_LIKE_STOPWORDS = {
 ORG_SUFFIXES = {"ltd", "llc", "inc", "corp", "corporation", "plc", "gmbh", "sa", "ag", "bv", "pvt", "limited",
                 "group", "holdings", "services", "solutions", "systems", "technologies", "partners", "bank", "university"}
 
+# A value naming a body is not a person, even in a column of approvers ("Board Risk Cttee").
+BODY_WORDS = {"committee", "committees", "cttee", "council", "board", "forum", "panel", "department", "division",
+              "divisional", "team", "desk", "office", "function", "taskforce", "secretariat"}
+
 POSSESSIVE = re.compile(r"(?:'s|’s|'|’)$")
 # One word of a name: Unicode letters, optionally joined by hyphens / apostrophes, optional final "."
 WORD = re.compile(r"[^\W\d_]+(?:[-'’][^\W\d_]+)*\.?")
@@ -93,6 +97,9 @@ def looks_like_name(text: str, allow_list: set[str] | None = None, min_tokens: i
     shapes = [token_case(t) for t in real]
     if not real or None in shapes:
         return False
+    if TITLE in shapes:
+        # Two or three capitals in front of or behind a Title-case name are initials ("TK Moreau", "DK Lindt").
+        shapes = [INITIAL if c == UPPER and len(t) <= 3 else c for t, c in zip(real, shapes)]
     long_tokens = [t for t, c in zip(real, shapes) if c != INITIAL]
     if not long_tokens:
         return False
@@ -103,8 +110,11 @@ def looks_like_name(text: str, allow_list: set[str] | None = None, min_tokens: i
         return False  # a lone "RAMAN" is usually an acronym, a lone "notify" a word
     if all(t.lower() in NOT_A_NAME_WORDS or t.lower() in COMMON_TITLECASE for t in long_tokens):
         return False
-    if any(t.lower().rstrip(".") in ORG_SUFFIXES for t in long_tokens):
+    if any(t.lower().rstrip(".") in ORG_SUFFIXES or t.lower() in BODY_WORDS for t in long_tokens):
         return False
+    if LOWER in styles and not any(is_given_name(t) for t in long_tokens) and any(
+            t.lower() in NOT_A_NAME_WORDS or t.lower() in COMMON_TITLECASE for t in long_tokens):
+        return False  # lowercase with a business word in it and no given name: a wrapped line ("ment process")
     if allow_list and any(t.lower() in allow_list for t in long_tokens) and len(long_tokens) == 1:
         return False
     return True
@@ -183,6 +193,8 @@ def name_variants(full: str) -> dict[str, float]:
 
 def _usable_single(tok: str) -> bool:
     t = tok.rstrip(".")
+    if not WORD.fullmatch(t):
+        return False  # "C.A" from an OCR'd "C.A. Varga" is a pair of initials, not a word
     return (len(t) >= 3 and t[0].isupper() and t.lower() not in NOT_A_NAME_WORDS and t.lower() not in COMMON_TITLECASE
             and t.lower() not in NAME_LIKE_STOPWORDS)
 

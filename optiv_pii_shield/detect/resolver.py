@@ -8,6 +8,7 @@ from ..config import Settings
 from ..models import Document, Finding, Span
 from .names import (ANY_CASE, INITIAL, TITLE, UPPER, is_given_name, looks_like_name, name_tokens, ocr_denoise,
                     strip_possessive, surname_like, token_case, trim_to_name)
+from .vocab import all_vocabulary, is_vocabulary
 
 # When two different categories claim overlapping text, the more specific one wins.
 PRIORITY = {
@@ -20,11 +21,35 @@ PRIORITY = {
 LABEL_BEFORE = re.compile(r"[A-Za-z][A-Za-z .#/()'-]{1,40}[:：]\s*$")
 
 
-def clean_person(f: Finding, span: Span, allow: set[str]) -> Finding | None:
+# Rules whose match is a name by its position, not by its letters: kept as matched.
+POSITIONAL_NAME_RULES = ("rule:initials_surname",)
+# A single word is weak evidence of a name, except behind a title ("Ms Varga-Lindt").
+TITLED_NAME_RULES = ("rule:honorific_name",)
+
+
+def clean_person(f: Finding, span: Span, allow: set[str], vocab: frozenset[str] = frozenset()) -> Finding | None:
     """NER over-reaches ("M. Vossberg CEO", "Vendor Tier", "QRC_BYOD"). Trim or drop."""
     if f.entity_type != "PERSON":
+        if f.recognizer == "rule:name_dot_surname" and all(is_vocabulary(w, vocab) for w in re.split(r"[._]", f.text)):
+            f.decision = "drop"
+            f.reasons.append("both halves are ordinary words in these documents: not an address")
         return f
-    if f.layer.startswith("L3") or f.layer.startswith("L4"):
+    if f.layer.startswith("L4"):
+        return f  # a confirmed person, found again
+    # A field label, a heading or a product code is not a person, whatever flagged it: a column
+    # called "SLA name", a line starting "Question:", an NER guess on "Send Notification".
+    why = all_vocabulary(span.text[f.start:f.end], vocab, ocr=span.source != "native")
+    if why and f.recognizer != "structure:name-line":  # that rule goes by the layout, not by the words
+        f.decision = "drop"
+        f.reasons.append(f"not a name: {why}")
+        return f
+    if f.recognizer in POSITIONAL_NAME_RULES:
+        surname = re.split(r"[.\s ]+", span.text[f.start:f.end])[-1]
+        if not surname_like(surname, TITLE, allow):
+            f.decision = "drop"
+            f.reasons.append(f"'{surname}' is not surname-shaped")
+        return f
+    if f.layer.startswith("L3"):
         return f  # already validated as name-shaped
     raw = span.text[f.start:f.end]
     if "\n" in raw.strip():
@@ -45,7 +70,7 @@ def clean_person(f: Finding, span: Span, allow: set[str]) -> Finding | None:
         f.reasons.append(f"trimmed '{raw}' to '{raw[s:e]}'")
     f.start, f.end = f.start + s, f.start + e
     f.text = span.text[f.start:f.end]
-    if len(f.text.split()) == 1 and f.score > SINGLE_TOKEN_NER_CAP:
+    if len(f.text.split()) == 1 and f.score > SINGLE_TOKEN_NER_CAP and f.recognizer not in TITLED_NAME_RULES:
         # A lone capitalised word is the weakest NER signal (headings, product words). Keep it in the
         # review band: still redacted (fail closed), not used to propagate, flagged for a human.
         f.score = SINGLE_TOKEN_NER_CAP
@@ -61,7 +86,7 @@ NEXT_WORD = re.compile(r"[  ]([^\s,;:()\[\]\"]+)")
 PREV_WORD = re.compile(r"([^\s,;:()\[\]\"]+)[  ]$")
 
 
-def extend_person(f: Finding, span: Span, allow: set[str]) -> Finding:
+def extend_person(f: Finding, span: Span, allow: set[str], vocab: frozenset[str] = frozenset()) -> Finding:
     """A name hit that stops short of the surname leaves it readable: "[PERSON_001] BALAWENDER",
     "[PERSON_015] C1ark". Extend over one adjacent word written in the same case (OCR digit
     confusions tolerated) on the right; on the left only over a listed given name."""
@@ -72,7 +97,7 @@ def extend_person(f: Finding, span: Span, allow: set[str]) -> Finding:
     if not toks or len(toks) > 2 or len(shapes) != 1 or (shape := shapes.pop()) not in (TITLE, UPPER):
         return f
     m = NEXT_WORD.match(span.text, f.end)
-    if m and surname_like(m.group(1), shape, allow):
+    if m and surname_like(m.group(1), shape, allow) and not is_vocabulary(m.group(1), vocab):
         word = m.group(1).rstrip(".,;:!?")
         word = word[:len(word) - (len(word) - len(strip_possessive(word)))]
         f.end = m.start(1) + len(word)
@@ -81,6 +106,34 @@ def extend_person(f: Finding, span: Span, allow: set[str]) -> Finding:
     if m and surname_like(m.group(1), shape, allow) and is_given_name(ocr_denoise(m.group(1))):
         f.start = m.start(1)
         f.reasons.append(f"extended over adjacent given name '{m.group(1)}'")
+    f.text = span.text[f.start:f.end]
+    return f
+
+
+# "Ngozi C. Okpara" where only "Okpara" was found: a capitalised word and one or two initials
+# directly in front of a surname are the rest of the name. OCR glues the word before it on
+# ("ChairYelena A. Voronin") and reads an initial as a digit ("Tamara 5. Olsen").
+INITIALS_BEFORE = re.compile(r"(?<![^\W_])((?:[A-Z]\.[  ]?){1,3})$")
+GIVEN_BEFORE = re.compile(r"([A-Z][^\W\d_]{2,})[  ]((?:[A-Z0-9]\.[  ]?){1,2})$")
+GLUED = re.compile(r"(?<=[a-z])[A-Z]")
+
+
+def extend_given(f: Finding, span: Span, allow: set[str], vocab: frozenset[str] = frozenset()) -> Finding:
+    """Extend a name to the left over its initials, and over the given name in front of them."""
+    words = span.text[f.start:f.end].split()
+    if f.entity_type != "PERSON" or f.decision == "drop" or not words or token_case(words[0]) == INITIAL:
+        return f
+    head = span.text[:f.start]
+    m = GIVEN_BEFORE.search(head)
+    given, at = (m.group(1), m.start(1)) if m else ("", 0)
+    if m and (cut := [g.start() for g in GLUED.finditer(given)]) and len(given) - cut[-1] >= 3:
+        given, at = given[cut[-1]:], at + cut[-1]  # "ChairYelena" -> "Yelena"
+    if m and not is_vocabulary(given, vocab) and given.lower() not in allow:
+        f.start = at
+        f.reasons.append(f"extended over the given name and initial in front ('{given} {m.group(2).strip()}')")
+    elif m := INITIALS_BEFORE.search(head):
+        f.start = m.start(1)
+        f.reasons.append(f"extended over the initials in front ('{m.group(1).strip()}')")
     f.text = span.text[f.start:f.end]
     return f
 
@@ -165,7 +218,8 @@ def annotate(f: Finding, span: Span) -> Finding:
     return f
 
 
-def finalise(doc_findings: dict[str, list[Finding]], docs: dict[str, Document], settings: Settings) -> dict[str, list[Finding]]:
+def finalise(doc_findings: dict[str, list[Finding]], docs: dict[str, Document], settings: Settings,
+             vocab: frozenset[str] = frozenset()) -> dict[str, list[Finding]]:
     allow = {a.lower() for a in settings.allow_list}
     out = {}
     for file, findings in doc_findings.items():
@@ -174,9 +228,9 @@ def finalise(doc_findings: dict[str, list[Finding]], docs: dict[str, Document], 
         # Work on copies: finalise runs again after propagation and must start from the raw hits.
         for f in (replace(f, reasons=list(f.reasons)) for f in findings):
             span = doc.span(f.span_id)
-            f = clean_person(f, span, allow)
+            f = clean_person(f, span, allow, vocab)
             if f is not None:
-                cleaned.append(extend_person(f, span, allow))
+                cleaned.append(extend_given(extend_person(f, span, allow, vocab), span, allow, vocab))
         live = [f for f in cleaned if f.decision != "drop"]
         dropped = [f for f in cleaned if f.decision == "drop"]
         merged = merge(live)

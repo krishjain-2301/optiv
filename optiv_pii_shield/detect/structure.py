@@ -7,9 +7,9 @@ import re
 from functools import lru_cache
 from typing import Optional
 
-from ..config import HEADER_CATEGORIES
+from ..config import HEADER_CATEGORIES, NOT_A_NAME_WORDS
 from ..models import Finding, Span
-from .names import ANY_CASE, is_given_name, looks_like_name
+from .names import ANY_CASE, COMMON_TITLECASE, is_given_name, looks_like_name
 
 EMPTY = {"", "-", "–", "—", "n/a", "na", "none", "tbd", "tbc", "nil", "null", "yes", "no", "x", "?", "various", "all"}
 LABEL_LINE = re.compile(r"(?m)^[ \t]*(?P<label>[A-Za-z][A-Za-z .#/()'-]{1,40}?)[ \t]*[:：][ \t]*(?P<value>[^\n]+?)[ \t]*$")
@@ -67,7 +67,9 @@ def _finding(span: Span, start: int, end: int, cat: str, score: float, reasons: 
 SPEAKER_LINE = re.compile(r"(?m)^[ \t]*(?:\[?\d{1,2}:\d{2}(?::\d{2})?\]?[ \t]+)?(?P<name>[A-Z][\w'.-]*(?:[ \t]+[A-Z][\w'.-]*){0,3})"
                           r"[ \t]*(?:\(\d{1,2}:\d{2}(?::\d{2})?\))?:[ \t]+\S")
 NOT_A_SPEAKER = {"speaker", "interviewer", "interviewee", "moderator", "host", "operator", "narrator", "unknown", "agent",
-                 "customer", "caller", "participant", "audience", "presenter", "chair", "all", "everyone", "q", "a"}
+                 "customer", "caller", "participant", "audience", "presenter", "chair", "all", "everyone", "q", "a",
+                 "question", "answer", "response", "reply", "comment", "comments", "note", "result", "summary",
+                 "action", "attribute", "section", "condition", "example", "step", "status", "subject", "topic"}
 
 
 def _speaker_findings(span: Span, allow: set[str]) -> list[Finding]:
@@ -84,7 +86,9 @@ def _speaker_findings(span: Span, allow: set[str]) -> list[Finding]:
         name = m.group("name")
         # In running text a capitalised label is usually a heading ("Next Steps:"). It is taken for a
         # speaker when it starts with a listed given name, or when it speaks more than once.
-        if not (is_given_name(name.split()[0]) or labels.count(name) >= 2) or name.lower() in NOT_A_SPEAKER or header_category(name):
+        # A repeated label inside a table cell is a field of a form ("Question: 1.6", "Response: Yes").
+        repeated = labels.count(name) >= 2 and span.kind != "table_cell" and not NON_PERSON_HEADER.search(name.lower())
+        if not (is_given_name(name.split()[0]) or repeated) or name.lower() in NOT_A_SPEAKER or header_category(name):
             continue
         if plausible(name, "PERSON", allow)[0]:
             out.append(_finding(span, m.start("name"), m.end("name"), "PERSON", 0.7,
@@ -92,8 +96,60 @@ def _speaker_findings(span: Span, allow: set[str]) -> list[Finding]:
     return out
 
 
+def name_list_findings(docs: dict, findings: dict[str, list[Finding]], allow: set[str]) -> list[Finding]:
+    """A table cell that lists people, one per line: when at least half of its lines are names
+    already found, the other name-shaped lines are people too ("DK Lindt" between "Sarah
+    Varga" and "John Lindt"), whatever the column is called."""
+    people: dict[str, list[tuple[int, int]]] = {}
+    for fs in findings.values():
+        for f in fs:
+            if f.entity_type == "PERSON" and f.decision == "redact":
+                people.setdefault(f.span_id, []).append((f.start, f.end))
+    out = []
+    for doc in docs.values():
+        for span in doc.spans:
+            if span.kind != "table_cell" or span.id not in people:
+                continue
+            lines = [m for m in re.finditer(r"[^\n]+", span.text) if m.group().strip()]
+            if len(lines) < 3:
+                continue
+
+            def named(m) -> bool:
+                got = sum(min(b, m.end()) - max(a, m.start()) for a, b in people[span.id] if a < m.end() and b > m.start())
+                return got >= 0.8 * len(m.group().strip())
+
+            rest = [m for m in lines if not named(m)]
+            if len(lines) - len(rest) < max(2, len(lines) / 2):
+                continue
+            for m in rest:
+                value = m.group().strip()
+                if looks_like_name(value, allow, min_tokens=2):
+                    start = m.start() + len(m.group()) - len(m.group().lstrip())
+                    out.append(_finding(span, start, start + len(value), "PERSON", 0.65,
+                                        [f"a line in a cell that lists {len(lines) - len(rest)} people"], "structure:name-list"))
+    return out
+
+
+# Given names that are also everyday words. Left out of the gazetteer, because "mark the form" is
+# not a person; but alone on a line of a table or a screen, "Mark Lund" is one.
+WORD_LIKE_GIVEN = {"mark", "will", "bill", "grace", "hope", "rose", "joy", "dawn", "faith", "jack", "frank", "grant",
+                   "rob", "bob", "pat", "sue", "ray", "dan", "don", "nick", "josh", "rod", "sandy", "sally", "amber",
+                   "art", "carol", "dean", "earl", "holly", "ivy", "lance", "miles", "pearl", "penny", "ruby", "victor"}
+NAME_LINE = re.compile(r"(?m)^[ \t]*([A-Z][a-z]+)[ \t]([A-Z][a-z]+(?:[-'’][A-Z][a-z]+)?)[ \t]*$")
+
+
+def _name_line_findings(span: Span, allow: set[str]) -> list[Finding]:
+    if span.kind != "table_cell" and span.source != "image_ocr":
+        return []
+    return [_finding(span, m.start(1), m.end(2), "PERSON", 0.5,
+                     [f"'{m.group(1)}' is a given name and the line holds nothing but two capitalised words"], "structure:name-line")
+            for m in NAME_LINE.finditer(span.text)
+            if m.group(1).lower() in WORD_LIKE_GIVEN and m.group(2).lower() not in allow
+            and m.group(2).lower() not in NOT_A_NAME_WORDS and m.group(2).lower() not in COMMON_TITLECASE]
+
+
 def structure_findings(span: Span, allow: set[str]) -> list[Finding]:
-    out: list[Finding] = _speaker_findings(span, allow)
+    out: list[Finding] = _speaker_findings(span, allow) + _name_line_findings(span, allow)
     text = span.text
 
     # 1. Column header / metadata field describing the whole span.

@@ -13,7 +13,7 @@ import numpy as np
 from ..config import Settings
 from ..models import Document, ImageRef, Span, Visual, Word
 from . import visual
-from .common import IdGen, clean, decode_image, image_spans, span_from_lines
+from .common import IdGen, clean, decode_image, image_spans, mostly_unreadable, span_from_lines
 from .layout import (_overlap, assign_words_to_cells, find_captioned_figures, find_header_bar_tables, find_image_regions, find_tables, group_blocks, inside,
                      is_screenshot_grid)
 from .ocr import get_engine
@@ -264,7 +264,7 @@ def _set_status(ref: ImageRef, conf, spans, settings: Settings) -> None:
     ref.ocr_conf = round(conf, 3) if conf is not None else None
     if not spans:
         ref.ocr_status = "no_text"
-    elif conf is not None and conf < settings.low_conf_ocr:
+    elif (conf is not None and conf < settings.low_conf_ocr) or mostly_unreadable(spans, settings):
         ref.ocr_status = "low_confidence"
     else:
         ref.ocr_status = "read"

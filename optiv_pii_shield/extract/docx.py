@@ -14,7 +14,7 @@ import docx
 from ..config import Settings
 from ..models import Document, ImageRef, Span, Visual
 from . import visual
-from .common import IdGen, decode_image, image_spans
+from .common import IdGen, decode_image, image_spans, mostly_unreadable
 from .ooxml import TextUnit, docx_units, image_parts, package_units
 from .vector import svg_text
 
@@ -89,7 +89,7 @@ def ocr_part(part, doc: Document, ids: IdGen, settings: Settings, page, location
     ref.ocr_conf = round(conf, 3) if conf is not None else None
     if not spans:
         ref.ocr_status = "no_text"
-    elif conf is not None and conf < settings.low_conf_ocr:
+    elif (conf is not None and conf < settings.low_conf_ocr) or mostly_unreadable(spans, settings):
         ref.ocr_status = "low_confidence"
     else:
         ref.ocr_status = "read"

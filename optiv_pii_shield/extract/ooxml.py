@@ -36,15 +36,27 @@ class TextUnit:
 
 
 def build_unit(unit: TextUnit, paragraphs: list, t_tag: str, skip_tag: Optional[str] = None) -> TextUnit:
-    """Concatenate the text nodes of ``paragraphs`` (joined by newlines) and remember their offsets."""
+    """Concatenate the text nodes of ``paragraphs`` (joined by newlines) and remember their offsets.
+
+    A line break or tab inside a paragraph (``<w:br/>``, ``<a:br/>``, ``<w:tab/>``) is kept as
+    white space: without it the lines of a cell run together ("Tamara OlsenShen Smith") and
+    no name in them is found whole."""
+    ns = t_tag[:t_tag.index("}") + 1]
+    gaps = {f"{ns}br": "\n", f"{ns}cr": "\n", f"{ns}tab": "\t"}
     parts: list[str] = []
     pos = 0
     for i, p in enumerate(paragraphs):
         if i:
             parts.append("\n")
             pos += 1
-        for t in p.iter(t_tag):
+        for t in p.iter(t_tag, *gaps):
             if skip_tag is not None and _has_ancestor(t, skip_tag, stop=p):
+                continue
+            if t.tag != t_tag:
+                # <w:tab> is also the name of a tab-stop definition inside <w:tabs>: not text
+                if t.getparent().tag != f"{ns}tabs" and parts and parts[-1] != "\n":
+                    parts.append(gaps[t.tag])
+                    pos += 1
                 continue
             txt = t.text or ""
             unit.nodes.append((t, pos, pos + len(txt)))

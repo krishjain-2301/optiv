@@ -154,13 +154,16 @@ No LLM decides what is PII. Four layers each look for evidence, and a score deci
 |---|---|---|
 | **L1** Rules | Patterns, checksums and context words (inside Presidio) | A 16-digit number that passes the Luhn check near the word "card" |
 | **L2** NER | spaCy `en_core_web_lg`, optional GLiNER-PII (inside Presidio) | "Priya Raman noticed that…" |
-| **L3** Structure | Column headers, `Label:` fields, document properties, speaker labels | Anything under an "E-mail" column, after "Full name:", or the speaker of a transcript cue |
-| **L4** Propagation | Every confirmed person is searched across all files: surname, initial, possessive, OCR misreadings | "Raman", "Rafael's", "R. Mendoza" |
+| **L3** Structure | Column headers, `Label:` fields, document properties, speaker labels, cells that list people one per line | Anything under an "E-mail" column, after "Full name:", or the speaker of a transcript cue |
+| **L4** Propagation | Every confirmed person is searched across all files: surname, initial, possessive, OCR misreadings, names run together with a neighbour. Repeats until nothing new is learned. The number of a confirmed ID is found inside other codes | "Raman", "Rafael's", "R. Mendoza", "ChairRaman", a badge number that holds an employee number |
 | **L0** Fail-closed | Identifier-like OCR words below the confidence floor | A blurred string with digits or `@` |
 | **L5** Gate and reviewer | A value found in one place is redacted in every other place it appears; a reviewer's additions | |
 
 The **resolver** trims and drops name candidates that are business words, merges overlapping hits, adds a bonus
-when layers agree, and routes by score:
+when layers agree, and routes by score. A capitalised word that the same documents also write in lowercase
+("Question" / "question") is vocabulary, not a name (`detect/vocab.py`): a field label or a heading is dropped
+before it can be spread by propagation. A name found without its first part is extended over the initials and
+the given name in front of it ("Ngozi C." before a confirmed surname).
 
 | Score | Decision |
 |---|---|
@@ -197,6 +200,8 @@ stated health data (a special category), and confidential terms.
   thumbnail, image EXIF, PDF annotations, form fields and attachments.
 - **Pictures nobody read are blanked.** A picture with no readable text (a photo, a signature, a logo), a
   picture the extractor never visited, every picture when image OCR is off, and every face and QR code.
+  A screenshot in which at least half of the words were read below the confidence floor counts as unread:
+  its text is kept from the LLM and the picture is blanked.
   Bullets and icons under 32 px are left alone.
 
 **Profiles** set what replaces each category (`--profile`, or the dashboard):
@@ -307,7 +312,7 @@ can tell that a yield figure is a trade secret. The page says so.
 ## Configuration
 
 **Organisation vocabulary.** Allow-listed product and team names, always-redact names, internal ID formats
-(such as `EMP-40718` or `MER-IN-0042`), confidential terms, classification markings and the prompt guard's
+(such as `EMP-40718` or `VEN-IN-0042`), confidential terms, classification markings and the prompt guard's
 policy live in `optiv_pii_shield/data/org.yaml`. Point `PII_SHIELD_ORG_CONFIG`
 at another file for another client.
 
@@ -556,6 +561,9 @@ cd web; npm run typecheck
   whatever its case and layout; a paraphrase is not; the guard refuses, warns or allows; the registry over HTTP.
 - **Transcripts** (`tests/test_transcript.py`): cues and speakers read from `.vtt` and `.srt`; masked copies keep
   their timings; a speaker is the same token in both files; speaker labels in pasted text.
+- **Gold-label findings** (`tests/test_gold_fixes.py`): form fields and committees are not people; a given name
+  in front of an initial; names run together; a surname behind a title; IDs broken over a line; damaged values
+  in screenshot text; a mostly unreadable picture; line breaks inside DOCX cells.
 - **Guard record and answers** (`tests/test_guard_record.py`): rewritten tokens are recognised; an answer's
   echoed and produced values are reported; every event is recorded without text; a removed line is detected.
 - **Replay** (`tests/test_replay.py`): the outcome of each Samsung scenario under the cap and under the guard.
@@ -577,7 +585,8 @@ optiv_pii_shield/
   modelstore.py        model files pinned by SHA-256
   extract/             sniff, pdf, docx, pptx, xlsx, image, plain (text/CSV/e-mail), transcript (.vtt/.srt), ooxml walkers, layout
                        (tables/regions), ocr backends, visual (faces, QR codes)
-  detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver, secrets
+  detect/              rules + validators (L1), ner (L2), structure (L3), propagation (L4), resolver, vocab
+                       (ordinary words learned from the documents), secrets
                        (names and values of credentials), code (is this text source code?), markings
                        (classification markings)
   redact/              tokens (vault, keyed tokens, profiles, rehydrate), text (LLM output), files (masked
@@ -619,6 +628,7 @@ tests/
 | 2 Oct 2026 | An external review found leaks. Fixed: names in any letter case and with accents, hidden OOXML parts, an unsafe download zip, coverage gaps. Added the **leak gate**, the Faker held-out set, hard failure on missing models, the encrypted vault, session clean-up, the exposure score with page heatmap and residual risk, XLSX, organisation vocabulary in YAML, pinned dependencies and CI. Package renamed to `optiv_pii_shield` |
 | 3 Oct 2026 | GLiNER measured and constrained (hits must look like a value of their category). The Streamlit demo replaced by a FastAPI server and a React dashboard. README and UI polish |
 | 7 Oct 2026 | A second review showed the leak gate could not see pixels. Added the **re-OCR verification** of masked copies, blanking of faces, QR codes and unread pictures, the **review** workflow with re-redaction, **rehydration**, keyed tokens, redaction profiles, the **hash-chained audit log and run manifest** with signing, model pinning by SHA-256, the server's request guard and upload cap, text / CSV / e-mail inputs, PDF bookmarks, new identifier categories, and an offline test |
+| 10 Oct 2026 | First gold-label test on the three case-study files (AI-checked key). It found field labels taken for people and spread by propagation, first names left beside a masked surname, IDs broken over a line, damaged values in screenshots, an unreadable screenshot left in the masked copy, and line breaks dropped from DOCX cells. Fixed: the vocabulary check, form fields in cells, name extension, repeated propagation, new rules for titles, SSN endings, addresses and screenshot text, mostly unreadable pictures withheld, DOCX line breaks kept. On those files: findings that are not personal data 592 to 32, missed instances 49 to 6, none of them in the LLM text. The held-out set did not move |
 
 ## Contributing
 
