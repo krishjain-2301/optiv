@@ -2,7 +2,7 @@
 
 <img src="web/public/shield.svg" alt="PII Shield logo" width="72" />
 
-# PII Shield
+# PII Shield 
 
 **Offline, fail-closed PII detection and redaction, so documents can go to an LLM without the people inside them.**
 
